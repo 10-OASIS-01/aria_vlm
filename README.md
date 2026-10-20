@@ -200,9 +200,10 @@ Upstream does not report playback completion or offer a TTS cancel acknowledgeme
 ## 5. Replay a task and inspect results
 
 Two small tasks are used for the deployment's visual planning evaluation. Both
-passed one simulated trial on October 20, 2026 (seven real-model requests in total).
-Median model time was 2.56 s, median HTTP time 3.18 s, and the first model call took
-32.66 s. This is a smoke test, not a measured success rate; see
+passed the initial and post-deployment trials on October 20, 2026 (seven real-model
+requests in each trial pair). The latest median model time was 1.27 s and median
+HTTP time was 1.97 s; the first model call took 4.91 s. The initial run included a
+32.66 s first call. These are smoke tests, not a measured success rate; see
 [validation notes](docs/validation.md) for the evidence and remaining checks.
 
 The two tasks are:
