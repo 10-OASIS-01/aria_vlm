@@ -197,36 +197,6 @@ The bridge buffers the existing `/aria/audio` blocks, downmixes channels, conver
 
 Upstream does not report playback completion or offer a TTS cancel acknowledgement. The bridge sends one instruction per user request, deduplicates request IDs, and uses an estimated speaking interval to guard repeats and recording. Cancelling suppresses **unsent** planner output; it cannot retract speech already handed to the glasses.
 
-## 5. Replay a task and inspect results
-
-Two small tasks are used for the deployment's visual planning evaluation. Both
-passed the initial and post-deployment trials on October 20, 2026 (seven real-model
-requests in each trial pair). The latest median model time was 1.27 s and median
-HTTP time was 1.97 s; the first model call took 4.91 s. The initial run included a
-32.66 s first call. These are smoke tests, not a measured success rate; see
-[validation notes](docs/validation.md) for the evidence and remaining checks.
-
-The two tasks are:
-
-| Task | Goal | What is evaluated |
-| --- | --- | --- |
-| Reset the desk | Red mug onto its coaster; blue book into a tray | Distinguishing objects, selecting a destination, avoiding repeated completed moves |
-| Sort the colored cubes | Each cube into the same-color tray | Color grounding, progress across multiple moves, recognizing completion |
-
-The recorded evaluation uses actual Qwen inference on kinematic MuJoCo scenes. A small text action executor applies supported object moves and renders the next camera window. The model receives pixels, a goal and dialogue; it does not receive ground-truth object state or candidate actions. Unsupported or repeated moves are recorded as failures. Completion requires both the scene objective and the model's explicit `DONE` response. These results concern visual planning; human task completion, grasp physics and the glasses' transport/playback remain separate validation work.
-
-The report and source observation clips appear on the deployed dashboard. Requests retain twenty frame images per step when `ARIA_SAVE_FRAMES=1`. Detailed results live under `.runtime/reports/` and session records in `.runtime/guidance.sqlite3`. A fresh deployment starts with an empty experiment record and accepts your own camera clips.
-
-For a recorded clip, use the dashboard's **Try a task** form. The browser samples twenty frames from the last ten seconds locally; only those JPEGs are sent. A clip must be at least ten seconds long. After each physical action, upload a new clip. You can also submit an existing 2 Hz image sequence:
-
-```bash
-python scripts/plan_images.py --frames ./example-frames --goal 'Clear the work mat.'
-```
-
-The directory must contain exactly twenty ordered JPEG/PNG files. Use `--session SESSION_ID` to continue a previous replay session.
-
-See [API and timing](docs/api.md) for request fields, state transitions and what each latency measures. See [hardware checklist](docs/hardware-checklist.md) for the remaining lab work.
-
 ## Troubleshooting
 
 | Symptom | Check |
