@@ -1,0 +1,3 @@
+[submodule "external/aria2_ros2"]
+	path = external/aria2_ros2
+	url = https://github.com/sparklabutah/aria2_ros2.git

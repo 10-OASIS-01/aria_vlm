@@ -1,0 +1,10 @@
+planner_bridge:
+  ros__parameters:
+    backend_url: http://127.0.0.1:8785
+    image_topic: /aria/rgb/image_raw
+    audio_topic: /aria/audio
+    tts_topic: /aria/tts
+    max_result_age_seconds: 60.0
+    image_interval_ms: 200.0
+    max_audio_seconds: 20.0
+    audio_gain: 1.0

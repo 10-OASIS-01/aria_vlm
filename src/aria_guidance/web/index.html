@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Aria · Visual guidance</title>
+  <link rel="icon" href="assets/favicon.svg"><link rel="stylesheet" href="assets/style.css">
+  <script src="assets/app.js" defer></script>
+</head>
+<body>
+<aside class="sidebar">
+  <a class="brand" href="#overview"><span class="brand-icon">a</span> aria<span class="brand-dot">.</span></a>
+  <div class="workspace-label">VISUAL GUIDANCE LAB</div>
+  <nav aria-label="Workspace navigation">
+    <a href="#overview"><span>◫</span> Overview</a>
+    <a href="#experiments"><span>◉</span> Experiments</a>
+    <a href="#workbench"><span>▷</span> Try a task</a>
+    <a href="#connect"><span>⇄</span> Connect Aria</a>
+  </nav>
+  <div class="sidebar-bottom"><span class="tiny-dot"></span> MVP · October 2026<p>Observe the world.<br>Guide the next step.</p></div>
+</aside>
+<main>
+  <header class="topbar"><div>Workspace <span>/</span> <strong>Aria MVP</strong></div><div class="topbar-right"><span id="service-badge" class="badge">Connecting</span><button class="text-button" id="token-button" hidden>API token</button><a class="avatar" href="#workbench" aria-label="Try a task">↗</a></div></header>
+  <section id="overview">
+    <div class="section-eyebrow"><span class="tiny-dot"></span> WEARABLE INTELLIGENCE / MVP</div>
+    <div class="heading-row"><div><h1>One view. One next step.</h1><p class="lead">Turn a moment of observation into guidance a person can act on.</p></div><a href="api/download/aria-guidance-source.zip" class="button dark">↓ Get the code</a></div>
+    <div class="hero-grid">
+      <article class="pipeline card">
+        <div class="card-top"><span class="eyebrow">THE GUIDANCE LOOP</span><span class="badge subtle">User-paced</span></div>
+        <div class="pipeline-steps">
+          <div><span class="step-icon camera-icon">◉</span><strong>Observe</strong><small>Aria camera<br>20 frames / 10 seconds</small></div><span class="connector">→</span>
+          <div><span class="step-icon model-icon">✳</span><strong>Plan</strong><small>Qwen3.5-9B<br>Goal + recent history</small></div><span class="connector">→</span>
+          <div><span class="step-icon speak-icon">≋</span><strong>Guide</strong><small>One instruction<br>Onboard speech</small></div>
+        </div>
+        <div class="loop-line"><span>↳</span> Human acts <span>·</span> Says “done” or “next” <span>↺</span></div>
+        <div class="pipeline-footer"><span class="tiny-dot"></span><span id="model-detail">Checking the model service…</span></div>
+      </article>
+      <article class="milestone card"><div class="card-top"><span class="eyebrow">THIS WEEK</span><span>↗</span></div><h2>From backend<br>to a working loop.</h2><ol class="timeline"><li><span>20 OCT</span><div><strong>Backend handoff</strong><small>Model service + ROS bridge</small></div></li><li><span>22 OCT</span><div><strong>Test on the glasses</strong><small>Hitesh & Matthew · integration questions</small></div></li><li><span>26 OCT</span><div><strong>Full system demo</strong><small>Human task completion + latency</small></div></li></ol></article>
+    </div>
+    <div class="metrics-grid"><div class="metric"><span>PLANNER</span><strong>Qwen3.5 <em>9B</em></strong><small id="device-label">Model status pending</small></div><div class="metric"><span>OBSERVATION</span><strong>20 <em>frames</em></strong><small>2 Hz across the last 10 seconds</small></div><div class="metric"><span>MEASURED MODEL LATENCY</span><strong id="latency-value">—</strong><small id="latency-caption">Awaiting recorded trials</small></div><div class="metric"><span>VISUAL TRIALS</span><strong id="trials-value">—</strong><small id="trials-caption">Actual results appear after evaluation</small></div></div>
+    <div class="scope-note"><span>◇</span><p><strong>Evidence scope</strong> <span id="scope-text">Rendered scene trials test visual planning. Aria camera, microphone and onboard speech still need a hardware session.</span></p></div>
+  </section>
+
+  <section id="experiments">
+    <div class="heading-row"><div><div class="section-eyebrow">01 / OBSERVATION TO ACTION</div><h2>Experiment notebook</h2><p>Inspect each observation, model instruction and measured response.</p></div><a class="text-link" href="api/download/validation.json">Download results ↗</a></div>
+    <div id="experiment-grid" class="experiment-grid"><div class="empty card">No trials published yet. The first evaluation will appear here.</div></div>
+    <article class="card evidence-card"><div><span class="eyebrow">VALIDATION RECORD</span><h3>What has been checked</h3></div><div id="validation-list" class="validation-list"><p>Evaluation is pending.</p></div></article>
+  </section>
+
+  <section id="workbench">
+    <div class="heading-row"><div><div class="section-eyebrow">02 / YOUR OBSERVATION</div><h2>Try a task</h2><p>Upload a short camera clip and ask for the next step.</p></div><span class="badge subtle">Real model inference</span></div>
+    <div class="workbench-grid">
+      <form id="trial-form" class="card trial-form">
+        <label for="goal">What should the person accomplish?</label><textarea id="goal" rows="3" required minlength="3" maxlength="1500" placeholder="For example: put the books in the tray and clear the work mat."></textarea>
+        <label for="clip">Observation clip <small>At least 10 seconds; processed in your browser</small></label>
+        <div class="upload-box"><span>↥</span><input id="clip" type="file" accept="video/*" required><p>The last 10 seconds become 20 timestamped frames.</p></div>
+        <div class="form-actions"><button class="button dark" type="submit" id="plan-button" disabled>Plan next step →</button><button class="text-button" type="button" id="cancel-button">Reset task</button></div>
+        <p class="form-note">After acting, upload a new clip and submit again. Each submission confirms the previous step and plans from the updated view.</p>
+        <p id="trial-status" role="status" class="form-status">Checking model availability…</p>
+      </form>
+      <article class="card instruction-panel"><div class="card-top"><span class="eyebrow">NEXT INSTRUCTION</span><span class="badge subtle" id="instruction-state">Waiting for a clip</span></div><img id="clip-preview" alt="Latest sampled observation" hidden><div class="instruction-body"><span class="quote-mark">“</span><p id="instruction-text">A clear observation.<br>A useful next step.</p></div><div class="instruction-meta" id="instruction-meta">Your task session will appear here.</div></article>
+    </div>
+  </section>
+
+  <section id="connect">
+    <div class="heading-row"><div><div class="section-eyebrow">03 / LAB HANDOFF</div><h2>Connect the glasses</h2><p>Run the bridge beside the existing Aria ROS 2 infrastructure.</p></div><a href="api/download/README.md" class="button light">Read the deployment guide ↗</a></div>
+    <div class="connect-grid"><article class="card connect-card"><span class="connect-number">1</span><h3>Start the backend</h3><p>Install the model dependencies, set <code>ARIA_MODEL_PATH</code>, then start one service process on a GPU workstation.</p><code class="command">bash scripts/service.sh start</code></article><article class="card connect-card"><span class="connect-number">2</span><h3>Join aria2_ros2</h3><p>Build the bridge in the ROS 2 Humble workspace. Use the same domain as the Aria node and set the backend URL.</p><code class="command">ros2 launch aria_planner_bridge bridge.launch.py</code></article><article class="card connect-card"><span class="connect-number">3</span><h3>Give a goal, then act</h3><p>Type a goal or use push-to-talk. The bridge samples the camera and publishes the next instruction to <code>/aria/tts</code>.</p><code class="command">/planner/goal · /planner/command</code></article></div>
+    <div class="topic-table card"><table><thead><tr><th>Aria node</th><th>Existing ROS topic</th><th>Purpose</th></tr></thead><tbody><tr><td><span class="table-tag">PUBLISHES</span></td><td><code>/aria/rgb/image_raw</code></td><td>Vision: RGB with sensor-data QoS</td></tr><tr><td><span class="table-tag">PUBLISHES</span></td><td><code>/aria/gaze</code></td><td>Gaze: available, unused by the MVP planner</td></tr><tr><td><span class="table-tag">PUBLISHES</span></td><td><code>/aria/audio</code></td><td>Microphone: interleaved int32 samples</td></tr><tr><td><span class="table-tag">SUBSCRIBES</span></td><td><code>/aria/tts</code></td><td>Text for onboard speech</td></tr></tbody></table><p class="form-note">The /planner controls belong to the new bridge. No changes to the Aria node are required.</p></div>
+  </section>
+  <footer>Aria Visual Guidance <span>Qwen3.5-9B · Project Aria Gen2 · ROS 2 Humble</span><a href="https://github.com/sparklabutah/aria2_ros2" target="_blank" rel="noreferrer">aria2_ros2 ↗</a></footer>
+</main>
+<div id="toast" class="toast" role="status" hidden></div>
+</body></html>
