@@ -58,13 +58,14 @@ class TrialRecorder:
             self.fallback = self.fallback_root.expanduser() / stamp
         return self.fallback
 
-    def open(self, goal, frames):
+    def open(self, goal, frames, camera=None):
         """Starts a trial; a trial still open is closed as replaced.
 
         Args:
             goal: the goal text.
             frames: BufferedFrames already buffered, saved so the video starts with what the
                 model saw.
+            camera: glasses, fake (tools/fake_camera.py), another frame_id, or None.
         """
         if self.folder:
             self.close("replaced")
@@ -81,6 +82,7 @@ class TrialRecorder:
             "id": self.folder.name,
             "session": self.folder.parents[1].name,
             "goal": goal,
+            "camera": camera,
             "started_ms": ns / 1e6,
             "started_ns": ns,
             "ended_ms": None,

@@ -2,6 +2,15 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-29 — Camera source in the console and trials (commit "Report which camera feeds guidance_node")
+
+**Added**
+- The console state carries `camera: {source, frame_id, hz, age_s}`: `glasses` for aria_node's `aria_rgb_optical_frame`, `fake` for `tools/fake_camera.py`, otherwise the raw frame_id. The 2 s heartbeat keeps rate and age current.
+- `trial.json` records `camera`, so test-camera trials can be told apart from real ones.
+
+**Changed behavior**
+- `tools/fake_camera.py` stamps frames `fake_camera` instead of imitating aria_node's frame_id.
+
 ## 2026-10-29 — Live console in the workbench, Foxglove removed (commit "Replace the Foxglove console with a Live section in the workbench")
 
 **Changed behavior**

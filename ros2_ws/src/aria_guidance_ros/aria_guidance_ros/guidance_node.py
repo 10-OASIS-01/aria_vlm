@@ -33,6 +33,8 @@ LOGGER = logging.getLogger(__name__)
 # The model only proposes completion; the person closes the task by confirming.
 CONFIRM_HINT = " Say done to confirm, or next to continue."
 # Late joiners (ptt.py, ros2 topic echo) get the current state at once.
+# Frame IDs of known cameras: aria_node's RGB camera and tools/fake_camera.py.
+CAMERA_SOURCES = {"aria_rgb_optical_frame": "glasses", "fake_camera": "fake"}
 LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
 
@@ -75,6 +77,7 @@ class GuidanceNode(Node):
         self.audio_busy = False
         self.last_wait_log = 0.0
         self.last_heard = None
+        self.camera_frame = None  # frame_id of the newest image, which names its camera.
         self.closing = threading.Event()
         self.console_wake = threading.Event()
         self.console_state, self.console_preview = None, None
@@ -133,6 +136,7 @@ class GuidanceNode(Node):
             return
         if self.frames.add(ts, jpeg):
             self.last_image_ms = ts
+            self.camera_frame = message.header.frame_id
             # The 640 px JPEG already made for the model; the console never sees raw frames.
             self.console_preview = jpeg
             self.console_wake.set()
@@ -150,7 +154,7 @@ class GuidanceNode(Node):
         self.task.start(goal)
         self.audio_active, self.audio_chunks = False, []
         try:
-            self.trial.open(goal, list(self.frames.frames))
+            self.trial.open(goal, list(self.frames.frames), self.camera_info()["source"])
         except OSError as e:
             self.get_logger().error(f"Trial folder could not be written: {e}")
         self.status("ready", goal)
@@ -282,6 +286,19 @@ class GuidanceNode(Node):
         self.status("silence", "No microphone audio was captured")
         return False, "No valid microphone audio was captured"
 
+    def camera_info(self):
+        """Which camera feeds the node, its rate over the last ~3 s, and its newest frame's age."""
+        frames = list(self.frames.frames)[-16:]
+        if not frames:
+            return {"source": None, "frame_id": None, "hz": 0.0, "age_s": None}
+        span_ms = frames[-1].timestamp_ms - frames[0].timestamp_ms
+        return {
+            "source": CAMERA_SOURCES.get(self.camera_frame, self.camera_frame),
+            "frame_id": self.camera_frame,
+            "hz": round((len(frames) - 1) * 1000 / span_ms, 1) if span_ms else 0.0,
+            "age_s": round(time.time() - frames[-1].timestamp_ms / 1000, 1),
+        }
+
     def console_command(self, command):
         kind, text = command["kind"], command["text"]
         if kind == "goal":
@@ -303,7 +320,8 @@ class GuidanceNode(Node):
             self.console_preview = None
             try:
                 if state is not None and (state is not sent or time.monotonic() - sent_at > 2):
-                    self.client.live_state(state)
+                    # Camera health rides on every push, so the 2 s heartbeat keeps it current.
+                    self.client.live_state({**state, "camera": self.camera_info()})
                     sent, sent_at = state, time.monotonic()
                 if preview:
                     self.client.live_preview(preview)

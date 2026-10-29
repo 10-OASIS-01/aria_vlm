@@ -47,7 +47,7 @@ def wait_for(predicate, timeout=10.0):
 def trials(tmp_path):
     """(trial.json, events, frame names) of each trial, oldest first."""
     found = []
-    for folder in sorted((tmp_path / "fallback").glob("*/trials/*")):
+    for folder in sorted((tmp_path / "backend" / "guidance").glob("*/trials/*")):
         lines = (folder / "guidance.jsonl").read_text().splitlines()
         frames = sorted(p.name for p in (folder / "frames").iterdir())
         found.append(
@@ -146,7 +146,7 @@ def node(executor, backend, tmp_path):
     params = {
         "backend_url": backend.url,
         "session_root": str(tmp_path / "aria"),  # No live session: trials use the fallback.
-        "fallback_root": str(tmp_path / "fallback"),
+        "fallback_root": str(tmp_path / "backend" / "guidance"),
     }
     node = GuidanceNode(parameter_overrides=[Parameter(k, value=v) for k, v in params.items()])
     executor.add_node(node)

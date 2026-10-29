@@ -126,6 +126,11 @@ def test_web_console_drives_the_node(node, camera, backend, probe):
     wait_for(lambda: web.get("/api/live/state").json().get("task") == "awaiting_feedback")
     state = web.get("/api/live/state").json()
     assert state["instruction"] == "Pick up the pen." and state["trial"]["id"]
+    # tools/fake_camera.py, not the glasses: the console and the trial both say so.
+    assert state["camera"]["source"] == "fake" and 4 <= state["camera"]["hz"] <= 6
+    assert state["camera"]["age_s"] < 1.5
+    trial = web.get(f"/api/trials/{state['trial']['session']}/{state['trial']['id']}").json()
+    assert trial["trial"]["camera"] == "fake"
     web.post("/api/live/command", json={"kind": "note", "text": "from the console"})
     wait_for(lambda: web.get("/api/live/state").json().get("state") == "note")
     # No glasses microphone here: talk starts recording, and the release finds no audio.

@@ -39,7 +39,11 @@ class MicLevel(Node):
         blocks, chunks = self.blocks, self.chunks
         self.blocks, self.chunks = 0, []
         if not chunks:
-            age = "never" if self.last_block is None else f"{time.monotonic() - self.last_block:.1f} s ago"
+            age = (
+                "never"
+                if self.last_block is None
+                else f"{time.monotonic() - self.last_block:.1f} s ago"
+            )
             print(f"NO AUDIO  (last block {age})", flush=True)
             return
         rms = float(np.sqrt(np.mean(np.concatenate(chunks) ** 2)))

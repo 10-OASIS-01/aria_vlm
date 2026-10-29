@@ -45,7 +45,8 @@ def test_fallback_without_a_live_session(tmp_path):
 def test_open_saves_the_buffered_window(tmp_path):
     frames = [BufferedFrame(1000.0 + i * 200, b"jpeg%d" % i) for i in range(3)]
     recorder = TrialRecorder(tmp_path / "aria", tmp_path / "fallback")
-    recorder.open("Clear the mat", frames)
+    recorder.open("Clear the mat", frames, camera="glasses")
+    assert read(recorder.folder)[0]["camera"] == "glasses"
     assert sorted(p.name for p in (recorder.folder / "frames").iterdir()) == [
         "1000.jpg",
         "1200.jpg",
