@@ -35,4 +35,7 @@ aria_guidance = ["web/*"]
 line-length = 100
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests/unit"]
+pythonpath = ["tests"]
+# The ROS venv pins pytest 6, which the anyio plugin no longer supports.
+addopts = "-p no:anyio"

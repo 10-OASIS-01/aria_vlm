@@ -8,18 +8,8 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from aria_guidance.config import Settings
-from aria_guidance.engine import Generation
 from aria_guidance.service import create_app
-
-
-class StubEngine:
-    state = "ready"
-
-    def status(self):
-        return {"state": self.state, "busy": False}
-
-    def generate(self, goal, history, images, timestamps):
-        return Generation("Pick up the pen.", "instruction", "Pick up the pen.", {}, 1, 1)
+from stubs import StubEngine
 
 
 def frames(newest_ms):

@@ -28,7 +28,7 @@ def main():
     paths = [root / name for name in names if (root / name).is_file()]
     for name in [
         "src/aria_guidance",
-        "ros2_ws/src/aria_planner_bridge",
+        "ros2_ws/src/aria_guidance_ros",
         "scripts",
         "deploy",
         "docs",

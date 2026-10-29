@@ -27,9 +27,9 @@ CONFIRM_HINT = " Say done to confirm, or next to continue."
 CONFIRM_WORDS = {"done", "yes", "confirm", "完成", "好了", "是"}
 
 
-class PlannerBridge(Node):
-    def __init__(self):
-        super().__init__("planner_bridge")
+class GuidanceNode(Node):
+    def __init__(self, **kwargs):
+        super().__init__("guidance_node", **kwargs)
         defaults = {
             "backend_url": "http://127.0.0.1:8785",
             "image_topic": "/aria/rgb/image_raw",
@@ -425,7 +425,7 @@ class PlannerBridge(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = PlannerBridge()
+    node = GuidanceNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

@@ -1,4 +1,4 @@
-planner_bridge:
+guidance_node:
   ros__parameters:
     backend_url: http://127.0.0.1:8785
     image_topic: /aria/rgb/image_raw

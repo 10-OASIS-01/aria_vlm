@@ -2,6 +2,21 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-29 — Rename to aria_guidance_ros, test harness (commit "Rename bridge to aria_guidance_ros, add integration test harness")
+
+No behavior change; the `/planner/*` topics are unchanged.
+
+**Renamed**
+- ROS package `aria_planner_bridge` is now `aria_guidance_ros`. Executable and node `planner_bridge` are now `guidance_node`. `bridge.launch.py` and `bridge.yaml` are now `guidance.launch.py` and `guidance.yaml`.
+- Debug tools moved from the workspace `.vscode/` to `tools/`. The integration notes moved to `docs/architecture.md`.
+
+**Added**
+- `tests/unit/` (the existing tests) and `tests/integration/`: a real backend with a scripted `StubEngine` (`tests/stubs.py`), a 5 Hz camera and `guidance_node` on ROS domain 77, plus a goal-to-TTS smoke test.
+
+**Upgrade notes**
+- In `aria2_ros2/src`, replace the `aria_planner_bridge` symlink with `aria_guidance_ros`, delete `build/aria_planner_bridge` and `install/aria_planner_bridge`, then `colcon build --symlink-install --packages-select aria_guidance_ros`.
+- Launch with `ros2 launch aria_guidance_ros guidance.launch.py`. A custom config file needs its top key renamed from `planner_bridge:` to `guidance_node:`.
+
 ## 2026-10-29 — Freshness check, bridge defaults, tests (`603a76f`)
 
 **Changed behavior**

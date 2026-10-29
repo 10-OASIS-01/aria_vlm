@@ -8,7 +8,7 @@ A **Qwen3.5-9B** backend that looks at the last 10 seconds of camera observation
 
 ```mermaid
 flowchart LR
-    G[Aria Gen2] -->|vision, audio| B[planner_bridge on ROS host]
+    G[Aria Gen2] -->|vision, audio| B[guidance_node on ROS host]
     B -->|20 frames + goal + dialogue| Q[Qwen3.5-9B on GPU workstation]
     Q -->|one next instruction| B
     B -->|text to /aria/tts| G
@@ -155,8 +155,8 @@ source activate.sh
 # Preserve the upstream numpy, setuptools, pytest and SDK pins.
 uv pip install --python "${ARIA_VENV:-$PWD/.venv}/bin/python" -e "$GUIDANCE_REPO"
 
-ln -s "$GUIDANCE_REPO/ros2_ws/src/aria_planner_bridge" src/aria_planner_bridge
-python -m colcon build --symlink-install --packages-select aria_planner_bridge
+ln -s "$GUIDANCE_REPO/ros2_ws/src/aria_guidance_ros" src/aria_guidance_ros
+python -m colcon build --symlink-install --packages-select aria_guidance_ros
 source activate.sh
 ```
 
@@ -167,10 +167,10 @@ If you already have a working `aria2_ros2` checkout, use it instead of the submo
 ```bash
 cd "$GUIDANCE_REPO/external/aria2_ros2"
 source activate.sh
-ros2 launch aria_planner_bridge bridge.launch.py backend_url:=http://127.0.0.1:8785
+ros2 launch aria_guidance_ros guidance.launch.py backend_url:=http://127.0.0.1:8785
 ```
 
-For a backend behind a prefix, pass the complete base URL, for example `backend_url:=http://GPU_HOST:443/aria`. A custom YAML file can be supplied with `config:=...`; see [bridge.yaml](ros2_ws/src/aria_planner_bridge/config/bridge.yaml). Use `ros2 topic list -t` to confirm the actual camera/audio/TTS names and change those three parameters if your lab's configuration differs.
+For a backend behind a prefix, pass the complete base URL, for example `backend_url:=http://GPU_HOST:443/aria`. A custom YAML file can be supplied with `config:=...`; see [guidance.yaml](ros2_ws/src/aria_guidance_ros/config/guidance.yaml). Use `ros2 topic list -t` to confirm the actual camera/audio/TTS names and change those three parameters if your lab's configuration differs.
 
 ## 4. Run a task through the glasses
 
@@ -234,11 +234,29 @@ Start recording, speak normally, then stop recording. No wake word or special ph
 
 On the Aria Gen 2 glasses tested here, `/aria/audio` carries 8 channels at 16 kHz, with 16-bit samples in the upper half of each int32. After the bridge mixes the channels down, room noise measured about 0.0002 RMS of full scale and normal speech about 0.0006. The backend treats a clip below 0.002 RMS as silence and returns an empty transcript without running ASR. At `audio_gain: 1.0` every recording therefore comes back empty, so the bridge defaults to `audio_gain: 16.0`.
 
-Adjust `audio_gain` in [bridge.yaml](ros2_ws/src/aria_planner_bridge/config/bridge.yaml), or in a copy passed with `config:=...`, if a different microphone or room needs it. The bridge reads the value only at startup, so restart it and confirm:
+Adjust `audio_gain` in [guidance.yaml](ros2_ws/src/aria_guidance_ros/config/guidance.yaml), or in a copy passed with `config:=...`, if a different microphone or room needs it. The bridge reads the value only at startup, so restart it and confirm:
 
 ```bash
-ros2 param get /planner_bridge audio_gain   # Double value is: 16.0
+ros2 param get /guidance_node audio_gain   # Double value is: 16.0
 ```
+
+## Tests
+
+Unit tests need no ROS. Run them in the backend venv:
+
+```bash
+pip install -e '.[dev]'
+python -m pytest
+```
+
+Integration tests start the real backend with a scripted model, a synthetic 5 Hz camera and `guidance_node`, on ROS domain 77. Run them in the Aria venv after building the package:
+
+```bash
+source "$GUIDANCE_REPO/external/aria2_ros2/activate.sh"
+python -m pytest "$GUIDANCE_REPO/tests/integration"
+```
+
+`tools/` holds the debug helpers: `fake_camera.py` (5 Hz stand-in for the glasses), `ptt.py` (hold-Space push-to-talk window) and `mic_level.py` (microphone level meter).
 
 ## Troubleshooting
 
