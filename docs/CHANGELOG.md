@@ -2,6 +2,20 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-29 — Trial recording (commit "Record each goal as a trial next to the aria_node session")
+
+**Added**
+- `TrialRecorder` (`aria_guidance/trial.py`). Each goal opens `<session>/trials/<NN>_<HHMMSS>/` with `trial.json`, `guidance.jsonl` and `frames/`. The 10 s frame window already buffered is saved at the start, and every later preview frame is written from the node's thread pool.
+- The session is the newest folder under `session_root` (default `data/aria`) whose `clock.csv` changed in the last 120 s. Otherwise trials go to `fallback_root` (default `aria_vlm/.runtime/guidance/<start time>/`).
+- Outcomes: `completed`, `cancelled`, `replaced` (new goal), `aborted` (shutdown).
+- Notes from `/guidance/note` and spoken `note: ...` are written to the trial as `note` events.
+
+**Changed behavior**
+- `guidance_node` writes its event log to the trial instead of the backend.
+
+**Upgrade notes**
+- Run `guidance_node` from `aria2_ros2/` (as the VS Code configs do), or set `session_root` to an absolute path, so it finds aria_node's sessions.
+
 ## 2026-10-29 — Task state in guidance_node, stateless backend (commit "Move task state into guidance_node, add stateless /v1/plan")
 
 **Changed behavior**

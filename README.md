@@ -219,6 +219,19 @@ The node buffers the existing `/aria/audio` blocks, downmixes channels, converts
 
 Upstream does not report playback completion or offer a TTS cancel acknowledgement. The node sends one instruction per user request and uses an estimated speaking interval to guard repeats and recording. Cancelling suppresses **unsent** planner output; it cannot retract speech already handed to the glasses.
 
+### Trial records
+
+Every goal is a trial, written to disk with nothing to save by hand. It goes into the newest aria_node session folder whose `clock.csv` is still being written (`session_root`, default `data/aria`, the same relative path aria_node uses), else into `.runtime/guidance/<start time>/`:
+
+```
+<session>/trials/03_142211/
+  trial.json      goal, start/end (host ms and ns), outcome, steps, latency summary
+  guidance.jsonl  goal, plan_request, plan_result, tts, reply, transcript, note, state, error
+  frames/<ms>.jpg preview JPEGs at about 5 Hz, starting with the 10 s before the goal
+```
+
+The outcome is `completed`, `cancelled`, `replaced` (a new goal), `aborted` (node shutdown), or null while the trial is open. Notes come from `/guidance/note` or a spoken `note: ...`.
+
 ### Speaking to the node
 
 Start recording, speak normally, then stop recording. No wake word or special phrasing is needed. What happens to the transcript depends on whether a task is active and on the exact words:

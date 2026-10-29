@@ -44,6 +44,22 @@ def wait_for(predicate, timeout=10.0):
     raise AssertionError(f"Timed out after {timeout} s")
 
 
+def trials(tmp_path):
+    """(trial.json, events, frame names) of each trial, oldest first."""
+    found = []
+    for folder in sorted((tmp_path / "fallback").glob("*/trials/*")):
+        lines = (folder / "guidance.jsonl").read_text().splitlines()
+        frames = sorted(p.name for p in (folder / "frames").iterdir())
+        found.append(
+            (
+                json.loads((folder / "trial.json").read_text()),
+                [json.loads(x) for x in lines],
+                frames,
+            )
+        )
+    return found
+
+
 class Backend:
     """The real FastAPI app on a free port; stop() and start() simulate a restart."""
 
@@ -120,8 +136,13 @@ def backend(tmp_path):
 
 
 @pytest.fixture
-def node(executor, backend):
-    node = GuidanceNode(parameter_overrides=[Parameter("backend_url", value=backend.url)])
+def node(executor, backend, tmp_path):
+    params = {
+        "backend_url": backend.url,
+        "session_root": str(tmp_path / "aria"),  # No live session: trials use the fallback.
+        "fallback_root": str(tmp_path / "fallback"),
+    }
+    node = GuidanceNode(parameter_overrides=[Parameter(k, value=v) for k, v in params.items()])
     executor.add_node(node)
     yield node
     executor.remove_node(node)

@@ -23,6 +23,7 @@ from aria_guidance.audio import mono_to_wav, pcm32_to_mono
 from aria_guidance.client import GuidanceClient
 from aria_guidance.frames import FrameBuffer, WindowNotReady, encode_jpeg, ros_image_to_pil
 from aria_guidance.task import Task, parse_reply
+from aria_guidance.trial import FALLBACK_ROOT, TrialRecorder
 
 LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +46,9 @@ class GuidanceNode(Node):
             "image_interval_ms": 200.0,
             "max_audio_seconds": 20.0,
             "audio_gain": 16.0,
+            # aria_node's record.output_dir, relative to the same working directory.
+            "session_root": "data/aria",
+            "fallback_root": str(FALLBACK_ROOT),
         }
         for name, default in defaults.items():
             self.declare_parameter(name, default)
@@ -56,6 +60,8 @@ class GuidanceNode(Node):
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aria-http")
         self.messages = queue.SimpleQueue()
         self.task = Task()
+        self.trial = TrialRecorder(self.config["session_root"], self.config["fallback_root"])
+        self.last_state = None
         self.planning = False  # A plan request is in flight, possibly for an older epoch.
         self.last_image_ms = -1.0
         self.speaking_until = 0.0
@@ -90,9 +96,15 @@ class GuidanceNode(Node):
         }
         self.state_pub.publish(String(data=json.dumps(body, ensure_ascii=False)))
         self.get_logger().info(f"{state}: {detail}")
+        if state != self.last_state:
+            self.last_state = state
+            self.record("state", state=state, detail=detail)
 
     def record(self, kind, **fields):
-        self.get_logger().debug(f"{kind}: {fields}")
+        try:
+            self.trial.event(kind, **fields)
+        except OSError as e:  # A full disk must not stop guidance.
+            self.get_logger().error(f"Trial event could not be written: {e}")
 
     def on_image(self, message):
         stamp = message.header.stamp
@@ -101,19 +113,29 @@ class GuidanceNode(Node):
         if ts - self.last_image_ms < 0.9 * self.config["image_interval_ms"]:
             return
         try:
-            self.frames.add(ts, encode_jpeg(ros_image_to_pil(message)))
-            self.last_image_ms = ts
+            jpeg = encode_jpeg(ros_image_to_pil(message))
         except ValueError as e:
             self.status("image_error", str(e))
+            return
+        if self.frames.add(ts, jpeg):
+            self.last_image_ms = ts
+            path = self.trial.frame_path(ts)
+            if path:
+                self.pool.submit(path.write_bytes, jpeg)
 
     def start(self, goal):
         goal = goal.strip()
         if not 3 <= len(goal) <= 1500:
             self.status("invalid_goal", "Goal must contain 3–1500 characters")
             return
+        if self.task.active:
+            self.record("reply", text="goal: " + goal)
         self.task.start(goal)
         self.audio_active, self.audio_chunks = False, []
-        self.record("goal", text=goal)
+        try:
+            self.trial.open(goal, list(self.frames.frames))
+        except OSError as e:
+            self.get_logger().error(f"Trial folder could not be written: {e}")
         self.status("ready", goal)
 
     def reply(self, text):
@@ -138,8 +160,13 @@ class GuidanceNode(Node):
             self.status("idle", "Set a goal first")
 
     def note(self, text):
-        if text.strip():
+        if not text.strip():
+            return
+        if self.trial.folder:
             self.record("note", text=text.strip())
+            self.status("note", text.strip())
+        else:
+            self.status("idle", "Notes need an open trial; set a goal first")
 
     def cancel(self):
         if not self.task.active:
@@ -149,6 +176,7 @@ class GuidanceNode(Node):
         self.audio_active, self.audio_chunks = False, []
         self.record("reply", text="cancel")
         self.status("cancelled", "Pending planner output is invalidated")
+        self.trial.close("cancelled")
 
     def repeat(self):
         if self.task.last and self.task.active:
@@ -160,7 +188,9 @@ class GuidanceNode(Node):
         if self.task.confirm():
             self.record("reply", text="confirm")
             self.publish_tts("Task complete.")
+            self.record("tts", text="Task complete.", repeat=False)
             self.status("completed", "Goal confirmed; set a new goal to continue")
+            self.trial.close("completed")
 
     def plan_if_ready(self):
         """Starts a plan when the task wants one, nothing else is running and frames are fresh."""
@@ -316,6 +346,7 @@ class GuidanceNode(Node):
 
     def close(self):
         self.task.cancel()
+        self.trial.close("aborted")
         self.pool.shutdown(wait=True, cancel_futures=True)
         self.client.close()
 
