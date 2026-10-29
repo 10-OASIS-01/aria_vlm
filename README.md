@@ -106,7 +106,7 @@ bash scripts/service.sh stop
 
 Open **http://127.0.0.1:8785/**. `/api/health` checks the process; `/api/ready` returns HTTP 200 only after the model has loaded. Startup runs in the background so the workbench remains available while weights load. Use **one server worker**: every worker would load its own model.
 
-The model uses BF16, SDPA, `enable_thinking=False`, greedy decoding and at most 96 output tokens. Greedy decoding deliberately departs from the model card's sampling recommendation, to keep the guidance loop deterministic. See [validation notes](docs/validation.md) for the measured environment and limits.
+The model uses BF16, SDPA, `enable_thinking=False`, greedy decoding and at most 96 output tokens. Greedy decoding deliberately departs from the model card's sampling recommendation, to keep the guidance loop deterministic. See [validation notes](docs/validation.md) for the measured environment and limits, and the [changelog](docs/CHANGELOG.md) for changes between versions.
 
 The 20 frames of each observation reach the model as one 2 fps video (`ARIA_INPUT_MODE=video`). Qwen's processor adds `<t seconds>` timestamps and packs two frames per temporal patch, so a request uses half the visual tokens of 20 separate images (`ARIA_INPUT_MODE=images`). The default budget, `ARIA_MAX_PIXELS=307200`, keeps the bridge's full 640×480 frames; at the earlier 131,072 pixels the model missed small objects such as a pen on a mat. On an RTX 5090 this configuration measured about 0.8 s of model time per request on replayed observations, against about 1.3 s for 640×480 as separate images.
 
