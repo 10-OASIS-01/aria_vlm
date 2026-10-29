@@ -3,7 +3,7 @@ const $ = (s) => document.querySelector(s);
 const base = new URL("./", location.href);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const localURL = (p) => new URL(p, base).href;
-const state = {status:null, reportKey:null, runIndices:{}, session:null, busy:false, epoch:0, token:sessionStorage.getItem("aria-token") || ""};
+const state = {status:null, session:null, busy:false, epoch:0, token:sessionStorage.getItem("aria-token") || ""};
 async function api(path, options={}) {
   const headers = {...(options.body && !(options.body instanceof FormData) ? {"Content-Type":"application/json"}:{}), ...options.headers};
   if(state.token) headers.Authorization = `Bearer ${state.token}`;
@@ -15,34 +15,14 @@ async function api(path, options={}) {
 let toastTimer;
 function toast(message) { $("#toast").textContent=message; $("#toast").hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$("#toast").hidden=true,4500); }
 function seconds(ms) { return `${(ms/1000).toFixed(2)} s`; }
-function renderExperiments(report) {
-  if(!report) return;
-  $("#experiment-grid").innerHTML=report.tasks.map((run,i)=>{
-    const idx=Math.min(state.runIndices[run.task_id] || 0,run.steps.length-1), step=run.steps[idx];
-    if(!step) return `<article class="card empty">${esc(run.title)}: no completed requests</article>`;
-    return `<article class="card experiment"><img class="experiment-image" src="${esc(localURL(step.preview))}" alt="${esc(run.title)} observation at step ${idx+1}"><div class="experiment-content"><div class="experiment-title"><h3>${esc(run.title)}</h3><span class="badge ${run.success?'ready':'error'}">${run.success?'Passed':'Needs review'}</span></div><p>${esc(run.goal)}</p><div class="run-controls"><span>RENDERED SCENE</span><span style="margin-left:auto">Step ${idx+1} / ${run.steps.length}</span><button data-run="${i}" data-delta="-1" aria-label="Previous observation" ${idx===0?'disabled':''}>←</button><button data-run="${i}" data-delta="1" aria-label="Next observation" ${idx===run.steps.length-1?'disabled':''}>→</button></div><div class="step-instruction">${esc(step.instruction)}</div><div class="step-stats"><span>MODEL ${seconds(step.timings.model_ms)}</span><span>HTTP ${seconds(step.client_roundtrip_ms)}</span><span>${esc(step.evaluation)}</span></div><a class="text-link clip-link" style="display:inline-block;margin-top:14px;font-size:10px" href="${esc(localURL(`api/download/${run.task_id}.mp4`))}">Download the starting clip ↘</a></div></article>`;
-  }).join("");
-  document.querySelectorAll("[data-run]").forEach(b=>b.onclick=()=>{ const run=report.tasks[Number(b.dataset.run)]; state.runIndices[run.task_id]=(state.runIndices[run.task_id]||0)+Number(b.dataset.delta); renderExperiments(report); });
-  const checks=report.checks || [];
-  $("#validation-list").innerHTML=checks.map(c=>`<span class="validation-item ${c.passed?'pass':'pending'}">${esc(c.label)}</span>`).join("");
-  $("#latency-value").textContent=seconds(report.metrics.median_model_ms);
-  $("#latency-caption").textContent=`Median of ${report.metrics.requests} model requests; includes first call`;
-  $("#trials-value").innerHTML=`${report.tasks.filter(r=>r.success).length} / ${report.tasks.length} <em>passed</em>`;
-  $("#trials-caption").textContent="Rendered scenes · actual Qwen inference";
-  $("#scope-text").textContent=report.scope;
-}
 async function refreshStatus() {
   try {
     const data=await api("api/status"); state.status=data;
     const m=data.model, badge=$("#service-badge");
     badge.textContent=m.state==="ready"?(m.busy?"Model thinking":"Model ready"):(m.state==="loading"?"Model loading":"Model unavailable"); badge.className=`badge ${m.state==="ready"?'ready':m.state==='loading'?'loading':'error'}`;
-    $("#device-label").textContent=m.device?`${m.device} · ${m.dtype}`:"Initializing model";
-    $("#model-detail").textContent=m.state==="ready"?`${m.model} · resident on ${m.device} · thinking disabled`:`Qwen3.5-9B · ${m.state}`;
     $("#plan-button").disabled=state.busy || m.state!=="ready";
     $("#token-button").hidden=!data.auth_required;
     if(!state.session && !state.busy) $("#trial-status").textContent=m.state==="ready"?"Model ready. Choose a clip to begin.":"Waiting for the model to finish loading…";
-    const reportKey=JSON.stringify(data.report);
-    if(reportKey!==state.reportKey){ state.reportKey=reportKey; renderExperiments(data.report); }
   } catch(err) { $("#service-badge").textContent="Service offline"; $("#service-badge").className="badge error"; $("#plan-button").disabled=true; }
 }
 $("#token-button").onclick=()=>{const t=prompt("API token for this browser session",state.token); if(t!==null){state.token=t.trim();sessionStorage.setItem("aria-token",state.token);toast("Token saved for this session");}};
@@ -104,25 +84,52 @@ function uuidFallback(){const a=crypto.getRandomValues(new Uint8Array(16));a[6]=
 $("#confirm-button").onclick=async()=>{const current=state.session;if(!current||state.busy)return;state.busy=true;try{await api(`api/sessions/${current.id}/feedback`,{method:"POST",body:JSON.stringify({event:"confirm"})});state.session=null;$("#confirm-button").hidden=true;$("#instruction-state").textContent="Task complete";$("#trial-status").textContent="Goal complete. Reset to start another task.";}catch(err){toast(err.message);}finally{state.busy=false;}};
 $("#cancel-button").onclick=async()=>{state.epoch++;const old=state.session;state.session=null;$("#confirm-button").hidden=true;$("#trial-status").textContent="Task reset. Start with a new goal and clip.";$("#instruction-text").textContent="Ready for a new task.";$("#instruction-state").textContent="Waiting for a clip";$("#clip-preview").hidden=true;$("#clip").value="";if(old){try{await api(`api/sessions/${old.id}/feedback`,{method:"POST",body:JSON.stringify({event:"cancel"})});}catch(err){toast(err.message);}}};
 // Live: the operator console. guidance_node owns the task; the backend relays its state and our commands.
-const live={state:null,visible:false,talking:false};
-const LIVE_BANDS={idle:["No goal","off"],ready:["Observing","info"],planning:["Thinking","wait"],awaiting_feedback:["Act, then say done","go"],awaiting_confirmation:["Confirm: done or next","ask"],completed:["Complete","go"],error:["Error: press Next to retry","stop"],cancelled:["Cancelled","off"]};
+const live={state:null,visible:false,talking:false,editingGoal:false};
+const TASK_BANDS={idle:["No goal","off"],ready:["Observing","info"],planning:["Thinking","wait"],awaiting_feedback:["Act, then say done","go"],awaiting_confirmation:["Confirm: done or next","ask"],completed:["Complete","go"],error:["Error: press Next to retry","stop"],cancelled:["Cancelled","off"]};
+// The node's momentary state wins over the task state; null keeps the task band's label, tone or detail.
+const STATE_BANDS={
+  recording:["Listening","stop","Release to send."],transcribing:["Hearing","wait","Recognizing speech."],
+  speech_guard:["Not spoken: press Repeat","ask","The previous instruction was still playing."],
+  stale:["Took too long: press Next","stop",null],silence:["Nothing heard","ask",null],talk_refused:["Can't listen yet","ask",null],
+  invalid_goal:["Goal not accepted","stop",null],image_error:["Camera error","stop",null],audio_error:["Microphone error","stop",null],
+  busy:[null,"wait",null],note:[null,null,(s)=>`Note saved: ${s.detail}`]};
+const CAMERAS={glasses:"Aria glasses",fake:"TEST CAMERA · not the glasses"};
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+function band(s){
+  if(!s)return ["Backend offline","off","The guidance service is not answering."];
+  if(!s.node_online)return ["Node offline","off","Start it with: ros2 launch aria_guidance_ros guidance.launch.py"];
+  const [taskLabel,taskTone]=TASK_BANDS[s.task]||["Working","info"],over=STATE_BANDS[s.state]||[];
+  const detail=typeof over[2]==="function"?over[2](s):over[2]??s.detail??"";
+  return [over[0]??taskLabel,over[1]??taskTone,detail];
+}
+function renderCamera(s){
+  const c=s&&s.node_online?s.camera:null,source=c&&c.source;
+  const late=source&&c.age_s>1,dead=source&&c.age_s>3;
+  const strip=$("#live-camera");strip.dataset.source=source?(CAMERAS[source]?source:"other"):"none";strip.dataset.health=!source?"none":dead?"dead":late?"late":"ok";
+  $("#live-camera-source").textContent=source?(CAMERAS[source]||`Camera: ${source}`):"No camera";
+  $("#live-camera-rate").textContent=source?`${c.hz.toFixed(1)} Hz · ${late?`last frame ${c.age_s.toFixed(1)} s ago`:"live"}`:"";
+}
 function renderLive(s){
   live.state=s;
   const online=Boolean(s&&s.node_online),active=online&&!["idle","completed","cancelled"].includes(s.task);
-  $("#live-node").textContent=s?(online?"Node connected":"Node offline"):"Service offline";$("#live-node").className=`badge ${online?"ready":"error"}`;
-  let [label,tone]=online?(LIVE_BANDS[s.task]||[s.task,"info"]):["Node offline","off"];
-  if(online&&s.state==="recording")[label,tone]=["Listening","stop"];else if(online&&s.state==="transcribing")[label,tone]=["Hearing","wait"];
-  $("#live-band").dataset.tone=tone;$("#live-label").textContent=label;
-  $("#live-detail").textContent=online?(s.detail||""):s?"Start it with: ros2 launch aria_guidance_ros guidance.launch.py":"The backend is not answering.";
+  const [label,tone,detail]=band(s);
+  $("#live-band").dataset.tone=tone;$("#live-label").textContent=label;$("#live-detail").textContent=detail;
+  $("#live-node").dataset.online=String(online);$("#live-node-text").textContent=online?"Node connected":s?"Node offline":"Backend offline";
+  renderCamera(s);
+  $("#live-goal-text").textContent=online&&s.goal?s.goal:"No goal set";
   $("#live-instruction").textContent=online&&s.instruction?s.instruction:"No instruction yet.";
   $("#live-heard").textContent=online&&s.heard?`“${s.heard}”`:"Nothing yet";
-  $("#live-trial").innerHTML=online&&s.trial?`<a class="text-link" href="#trials/${encodeURIComponent(s.trial.session)}/${encodeURIComponent(s.trial.id)}">${esc(s.trial.id)} · open in Trials</a>`:"None yet";
+  $("#live-trial").innerHTML=online&&s.trial?`<a class="text-link" href="#trials/${encodeURIComponent(s.trial.session)}/${encodeURIComponent(s.trial.id)}">${esc(s.trial.id)} · review in Trials</a>`:"None yet";
   $("#live-done").disabled=$("#live-next").disabled=!active;$("#live-cancel").disabled=!active;
   $("#live-repeat").disabled=!(active&&s.instruction);$("#live-talk").disabled=!online;
-  document.querySelectorAll("#live-goal-form button,#live-note-form button").forEach(b=>b.disabled=!online);
+  // While a task runs, the goal form hides behind New goal, so a stray submit cannot replace it.
+  const showForm=!active||live.editingGoal;
+  $("#live-goal-form").hidden=!showForm;$("#live-newgoal").hidden=!active||live.editingGoal;$("#live-newgoal").setAttribute("aria-expanded",String(showForm));
+  $("#live-goal-close").hidden=!(active&&live.editingGoal);
+  if(!$("#live-goal-submit").dataset.armed)$("#live-goal-submit").textContent=active?"Replace goal":"Set goal";
+  document.querySelectorAll("#live-goal-form button,#live-note-form button,#live-newgoal").forEach(b=>b.disabled=!online);
   $("#live-talk").classList.toggle("on",online&&Boolean(s.recording));
-  $("#live-talk").firstChild.textContent=online&&s.recording?"Listening, release to send ":"Hold to talk ";
+  $("#live-talk-text").textContent=online&&s.recording?"Listening, release to send":"Hold to talk";
 }
 async function pollLive(){
   let after=-1;
@@ -143,28 +150,42 @@ async function sendLive(kind,text=""){
   try{await api("api/live/command",{method:"POST",body:JSON.stringify({kind,text})});return true;}
   catch(err){toast(err.message);return false;}
 }
+// Destructive actions take a second press within 4 s.
+function confirmFirst(button,prompt,action){
+  if(button.dataset.armed){clearTimeout(Number(button.dataset.armed));delete button.dataset.armed;button.textContent=button.dataset.label;button.classList.remove("armed");action();return;}
+  button.dataset.label=button.textContent;button.textContent=prompt;button.classList.add("armed");
+  button.dataset.armed=String(setTimeout(()=>{delete button.dataset.armed;button.textContent=button.dataset.label;button.classList.remove("armed");},4000));
+}
 $("#live-done").onclick=()=>sendLive("reply","done");
 $("#live-next").onclick=()=>sendLive("reply","next");
 $("#live-repeat").onclick=()=>sendLive("reply","repeat");
-$("#live-cancel").onclick=()=>sendLive("reply","cancel");
-$("#live-goal-form").onsubmit=async(e)=>{e.preventDefault();const goal=$("#live-goal").value.trim();if(goal.length<3){toast("A goal needs at least 3 characters.");return;}if(await sendLive("goal",goal))$("#live-goal").value="";};
+$("#live-cancel").onclick=()=>confirmFirst($("#live-cancel"),"Press again to cancel the task",()=>sendLive("reply","cancel"));
+$("#live-newgoal").onclick=()=>{live.editingGoal=true;renderLive(live.state);$("#live-goal").focus();};
+$("#live-goal-close").onclick=()=>{live.editingGoal=false;renderLive(live.state);};
+$("#live-goal-form").onsubmit=(e)=>{
+  e.preventDefault();const goal=$("#live-goal").value.trim();
+  if(goal.length<3){toast("A goal needs at least 3 characters.");return;}
+  const submit=async()=>{if(await sendLive("goal",goal)){$("#live-goal").value="";live.editingGoal=false;renderLive(live.state);}};
+  const s=live.state,active=s&&s.node_online&&!["idle","completed","cancelled"].includes(s.task);
+  if(active)confirmFirst($("#live-goal-submit"),"Press again to replace the goal",submit);else submit();
+};
 $("#live-note-form").onsubmit=async(e)=>{e.preventDefault();const note=$("#live-note").value.trim();if(note&&await sendLive("note",note))$("#live-note").value="";};
-function talk(on){if(live.talking===on||$("#live-talk").disabled)return;live.talking=on;$("#live-talk").classList.toggle("held",on);sendLive("talk",on?"on":"off");}
+function talk(on){if(live.talking===on||(on&&$("#live-talk").disabled))return;live.talking=on;$("#live-talk").classList.toggle("held",on);sendLive("talk",on?"on":"off");}
 const talkButton=$("#live-talk");
 talkButton.addEventListener("pointerdown",(e)=>{talkButton.setPointerCapture(e.pointerId);talk(true);});
 ["pointerup","pointercancel","lostpointercapture"].forEach(type=>talkButton.addEventListener(type,()=>talk(false)));
 talkButton.addEventListener("keydown",(e)=>{if((e.key===" "||e.key==="Enter")&&!e.repeat){e.preventDefault();talk(true);}});
 talkButton.addEventListener("keyup",(e)=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();talk(false);}});
-const typing=(el)=>el&&(el.matches("input,textarea,select")||el.isContentEditable);
+const SHORTCUTS={d:"#live-done",n:"#live-next",r:"#live-repeat"};
+// Only in the Live view, never while typing or with focus on a control outside the console.
+const ownsKeys=(e)=>live.visible&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.target.matches("input,textarea,select,video,[contenteditable]")&&!(e.target.closest("button,a")&&!e.target.closest("#live"));
 document.addEventListener("keydown",(e)=>{
-  if(!live.visible||typing(e.target)||e.ctrlKey||e.metaKey||e.altKey)return;
+  if(!ownsKeys(e))return;
   if(e.key===" "&&e.target!==talkButton){e.preventDefault();if(!e.repeat)talk(true);}
-  else if(!e.repeat&&{d:"#live-done",n:"#live-next",r:"#live-repeat"}[e.key.toLowerCase()]){const b=$({d:"#live-done",n:"#live-next",r:"#live-repeat"}[e.key.toLowerCase()]);if(!b.disabled)b.click();}
+  else if(!e.repeat&&SHORTCUTS[e.key.toLowerCase()]){const b=$(SHORTCUTS[e.key.toLowerCase()]);if(!b.disabled)b.click();}
 });
 document.addEventListener("keyup",(e)=>{if(e.key===" "&&e.target!==talkButton&&live.talking)talk(false);});
 window.addEventListener("blur",()=>talk(false));
-new IntersectionObserver(entries=>{for(const e of entries)live.visible=e.isIntersecting;}).observe($("#live"));
-pollLive();pollPreview();
 
 // Trials: review of what guidance_node recorded, one folder per goal.
 const trials={list:[],current:null,detail:null,events:[]};
@@ -173,17 +194,22 @@ const EVENT_LABELS={goal:"Goal",tts:"Spoken",reply:"Reply",transcript:"Heard",no
 const trialURL=(t,suffix="")=>`api/trials/${encodeURIComponent(t.session)}/${encodeURIComponent(t.id)}${suffix}`;
 const clock=(ms)=>{const s=Math.max(0,Math.round(ms/1000));return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;};
 const when=(ms)=>ms?new Date(ms).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):"Unknown time";
-function outcomeBadge(t){const [label,cls]=OUTCOMES[t.outcome]||["Live","loading"];return {label,cls};}
+// An open trial whose files stopped changing lost its node without closing.
+function outcomeBadge(t){const [label,cls]=OUTCOMES[t.outcome]||(t.active?["Running","loading"]:["Interrupted","error"]);return {label,cls};}
+function hideTest(){try{return localStorage.getItem("aria-hide-test")==="1";}catch{return false;}}
 function renderTrialList(){
-  const list=$("#trial-list");
+  const list=$("#trial-list"),shown=trials.list.filter(t=>!(hideTest()&&t.camera==="fake"));
+  const unreviewed=trials.list.filter(t=>t.outcome&&!t.verdict&&t.camera!=="fake").length;
+  $("#trials-summary").textContent=trials.list.length?`${trials.list.length} trial${trials.list.length===1?"":"s"} · ${unreviewed} without a verdict`:"Each goal is recorded here: watch it, read the exchange, record a verdict.";
+  if(!shown.length&&trials.list.length){list.innerHTML=`<li class="trial-empty">Only test-camera trials so far. Untick “Hide test-camera trials” to see them.</li>`;return;}
   if(!trials.list.length){list.innerHTML=`<li class="trial-empty"><strong>No trials yet.</strong> Start guidance_node and give it a goal; every goal is recorded here with its video and timeline.</li>`;return;}
-  list.innerHTML=trials.list.map((t,i)=>{const b=outcomeBadge(t),current=trials.current&&trials.current.session===t.session&&trials.current.id===t.id;
+  list.innerHTML=shown.map((t)=>{const i=trials.list.indexOf(t);const b=outcomeBadge(t),current=trials.current&&trials.current.session===t.session&&trials.current.id===t.id;
     const verdict=t.verdict==="success"?`<span class="mark pass" title="Marked success">✓<span class="sr">Success</span></span>`:t.verdict==="fail"?`<span class="mark fail" title="Marked fail">✗<span class="sr">Fail</span></span>`:"";
-    return `<li><button type="button" class="trial-row" data-trial="${i}"${current?' aria-current="true"':""}><span class="trial-row-goal">${esc(t.goal)}</span><span class="trial-row-meta">${esc(when(t.started_ms))} · ${t.steps||0} step${t.steps===1?"":"s"}<span class="badge ${b.cls}">${b.label}</span>${verdict}</span></button></li>`;}).join("");
+    return `<li><button type="button" class="trial-row" data-trial="${i}"${current?' aria-current="true"':""}><span class="trial-row-goal">${esc(t.goal)}</span><span class="trial-row-meta">${esc(when(t.started_ms))} · ${t.steps||0} step${t.steps===1?"":"s"}<span class="badge ${b.cls}">${b.label}</span>${t.camera==="fake"?'<span class="badge test">Test camera</span>':""}${verdict}</span></button></li>`;}).join("");
   list.querySelectorAll("[data-trial]").forEach(b=>b.onclick=()=>openTrial(trials.list[Number(b.dataset.trial)]));
 }
 async function loadTrials(){
-  try{trials.list=await api("api/trials");renderTrialList();const link=location.hash.match(/^#trials\/([^/]+)\/([^/]+)$/);if(link&&!trials.current){const t=trials.list.find(x=>x.session===decodeURIComponent(link[1])&&x.id===decodeURIComponent(link[2]));if(t){openTrial(t);$("#trials").scrollIntoView();}}if(trials.current){const t=trials.list.find(x=>x.session===trials.current.session&&x.id===trials.current.id);if(t&&t.outcome!==trials.current.outcome)openTrial(t);}}
+  try{trials.list=await api("api/trials");renderTrialList();const link=location.hash.match(/^#trials\/([^/]+)\/([^/]+)$/);if(link&&(!trials.current||trials.current.session!==decodeURIComponent(link[1])||trials.current.id!==decodeURIComponent(link[2]))){const t=trials.list.find(x=>x.session===decodeURIComponent(link[1])&&x.id===decodeURIComponent(link[2]));if(t)openTrial(t);}if(trials.current){const t=trials.list.find(x=>x.session===trials.current.session&&x.id===trials.current.id);if(t&&t.outcome!==trials.current.outcome)openTrial(t);}}
   catch(err){$("#trial-list").innerHTML=`<li class="trial-empty error-text">Trials could not be loaded: ${esc(err.message)}</li>`;}
 }
 function eventText(e){return e.kind==="end"?`Trial ended: ${e.outcome}`:e.text||"";}
@@ -197,12 +223,23 @@ async function openTrial(t){
   const info=detail.trial,b=outcomeBadge(info);
   $("#trial-placeholder").hidden=true;$("#trial-view").hidden=false;
   $("#trial-goal").textContent=info.goal;
-  $("#trial-outcome").textContent=b.label;$("#trial-outcome").className=`badge ${b.cls}`;
+  const running=!info.outcome&&info.active;
+  $("#trial-outcome").textContent=running?"Running · open Live":b.label;$("#trial-outcome").className=`badge ${b.cls}`;
+  if(running)$("#trial-outcome").href="#live";else $("#trial-outcome").removeAttribute("href");
+  $("#trial-test").hidden=info.camera!=="fake";
   const latency=info.latency_ms?` · plan round trip ${seconds(info.latency_ms.mean)} mean, ${seconds(info.latency_ms.max)} max`:"";
-  $("#trial-meta").textContent=`${when(info.started_ms)} · session ${info.session} · ${info.steps||0} step${info.steps===1?"":"s"}${latency}`;
+  const camera=info.camera?{glasses:"Aria glasses",fake:"test camera"}[info.camera]||info.camera:"camera unknown";
+  $("#trial-meta").textContent=`${when(info.started_ms)} · ${camera} · ${info.steps||0} step${info.steps===1?"":"s"}${latency}`;
   const video=$("#trial-video");
   $("#trial-novideo").hidden=detail.frames>0;video.hidden=!detail.frames;
-  if(detail.frames)video.src=localURL(trialURL(t,`/video.mp4${info.outcome?"":`?at=${Date.now()}`}`));else video.removeAttribute("src");
+  video.querySelectorAll("track").forEach(track=>track.remove());
+  if(detail.frames){
+    const fresh=info.outcome?"":`?at=${Date.now()}`;
+    video.src=localURL(trialURL(t,`/video.mp4${fresh}`));
+    // Captions of everything said and noted, on by default; video.vtt sits next to video.mp4 for VLC.
+    const track=document.createElement("track");Object.assign(track,{kind:"captions",srclang:"en",label:"Guidance",default:true,src:localURL(trialURL(t,`/captions.vtt${fresh}`))});
+    video.append(track);
+  }else video.removeAttribute("src");
   trials.events=detail.events.filter(e=>EVENT_LABELS[e.kind]).map(e=>({...e,offset:detail.video_start_ms==null?null:e.t_ms-detail.video_start_ms}));
   $("#trial-events").innerHTML=trials.events.length?trials.events.map((e,i)=>`<li><button type="button" class="event kind-${e.kind}" data-event="${i}"${e.offset==null?" disabled":""}><span class="event-time">${e.offset==null?"–":clock(e.offset)}</span><span class="event-kind">${EVENT_LABELS[e.kind]}</span><span class="event-text">${esc(eventText(e))}</span></button></li>`).join(""):`<li class="trial-empty">No events were recorded.</li>`;
   $("#trial-events").querySelectorAll("[data-event]").forEach(el=>el.onclick=()=>{video.currentTime=Math.max(0,trials.events[Number(el.dataset.event)].offset/1000);video.play().catch(()=>{});});
@@ -223,7 +260,19 @@ document.querySelectorAll(".verdict-button").forEach(b=>b.onclick=()=>{const on=
 $("#trial-notes").addEventListener("blur",()=>{if(trials.detail&&$("#trial-notes").value!==(trials.detail.review.notes||""))saveReview();});
 $("#trial-video").addEventListener("timeupdate",()=>{const now=$("#trial-video").currentTime*1000;let last=-1;trials.events.forEach((e,i)=>{if(e.offset!=null&&e.offset<=now)last=i;});document.querySelectorAll("#trial-events .event").forEach((el,i)=>el.classList.toggle("playing",i===last));});
 $("#trials-refresh").onclick=()=>{loadTrials();if(trials.current)openTrial(trials.current);};
-loadTrials();setInterval(loadTrials,15000);
-const observer=new IntersectionObserver(entries=>{for(const e of entries)if(e.isIntersecting){document.querySelectorAll(".sidebar nav a").forEach(a=>a.classList.toggle("active",a.hash===`#${e.target.id}`));}},{rootMargin:"-15% 0px -60% 0px"});
-document.querySelectorAll("main > section").forEach(s=>observer.observe(s));
+setInterval(()=>{if(!$("#trials").hidden)loadTrials();},15000);
+// One view at a time: the sidebar switches sections; #trials/<session>/<trial> opens a trial.
+const VIEWS=["live","trials","workbench","connect"];
+function route(){
+  const view=VIEWS.find(v=>location.hash===`#${v}`||location.hash.startsWith(`#${v}/`))||"live";
+  document.querySelectorAll("main > section").forEach(section=>section.hidden=section.id!==view);
+  document.querySelectorAll(".sidebar nav a").forEach(a=>a.classList.toggle("active",a.hash===`#${view}`));
+  live.visible=view==="live";if(!live.visible)talk(false);
+  if(view==="trials")loadTrials();else $("#trial-video").pause();
+  scrollTo(0,0);
+}
+window.addEventListener("hashchange",route);route();
+$("#trials-hide-test").checked=hideTest();
+$("#trials-hide-test").onchange=(e)=>{try{localStorage.setItem("aria-hide-test",e.target.checked?"1":"0");}catch{}renderTrialList();};
+pollLive();pollPreview();
 refreshStatus();setInterval(refreshStatus,5000);

@@ -187,14 +187,14 @@ For a backend behind a prefix, pass the complete base URL, for example `backend_
 
 ### Operator console
 
-Open the workbench's **Live** section, `http://<backend>:8785/#live`. guidance_node connects to the backend it already uses for planning and relays its state, the 640 px camera preview, and your commands, so the console works from any machine that can reach the backend. It shows:
+Open the workbench at `http://<backend>:8785/`. It opens on **Live**; the sidebar switches between Live, Trials, Try a task and Connect. guidance_node connects to the backend it already uses for planning and relays its state, the 640 px camera preview and your commands, so the console works from any machine that can reach the backend.
 
-- the task state as a full-width band (Observing, Thinking, Act then say done, Confirm);
-- the camera view the model sees, and the current instruction in large text;
-- Done and Next (keys D and N), Hold to talk (or hold Space), Repeat (R) and Cancel;
-- Goal and Note inputs, the last thing heard, and a link to the trial in **Trials**.
+- The band states the one thing to do now (Observing, Thinking, Act then say done, Confirm, Not spoken: press Repeat, Listening), with the reason beside it.
+- The goal and the current instruction sit under it. The camera strip names the source: **Aria glasses**, or **TEST CAMERA · not the glasses** for `tools/fake_camera.py`, with frame rate and age. The preview dims when frames are late.
+- Done and Next (keys D and N), Hold to talk (or hold Space), Repeat (R) and New goal. Replacing a running goal and Cancel task each need a second press within 4 s.
+- Keys work only in the Live view and never while typing.
 
-The keys work while the Live section is on screen and no text field has focus. Commands are refused while guidance_node is not connected, so a stale "done" never fires later. Rerun (`viewer.enable` in aria_node) stays the device-debug viewer; keep it off during trials.
+Commands are refused while guidance_node is not connected, so a stale "done" never fires later. Rerun (`viewer.enable` in aria_node) stays the device-debug viewer; keep it off during trials.
 
 ### From a terminal
 
@@ -245,7 +245,7 @@ Every goal is a trial, written to disk with nothing to save by hand. It goes int
 
 The outcome is `completed`, `cancelled`, `replaced` (a new goal), `aborted` (node shutdown), or null while the trial is open. Notes come from `/guidance/note` or a spoken `note: ...`.
 
-Review trials in the workbench at `/#trials`: pick one to watch its video (built from `frames/` on first view, timed by the capture stamps), select a timeline event to jump there, and mark the verdict and notes, saved to `review.json` in the trial folder. The backend finds trials under `ARIA_SESSIONS_DIR` (default `../aria2_ros2/data/aria`) and `.runtime/guidance`. Video encoding uses PyAV, installed with the `speech` extra. `#trials/<session>/<trial>` links straight to one trial.
+Review trials in the workbench's **Trials** view (`/#trials`). Captions of everything said and noted play over the video by default; `video.vtt` is written next to `video.mp4`, so VLC shows them too. Test-camera trials carry a Test camera tag and can be hidden, and an open trial whose node died without closing it reads Interrupted. In Trials: pick one to watch its video (built from `frames/` on first view, timed by the capture stamps), select a timeline event to jump there, and mark the verdict and notes, saved to `review.json` in the trial folder. The backend finds trials under `ARIA_SESSIONS_DIR` (default `../aria2_ros2/data/aria`) and `.runtime/guidance`. Video encoding uses PyAV, installed with the `speech` extra. `#trials/<session>/<trial>` links straight to one trial.
 
 ### Speaking to the node
 

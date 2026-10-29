@@ -28,7 +28,14 @@ from .schemas import (
     SessionCreate,
 )
 from .store import Conflict, Store
-from .trial import find_trial, list_trials, read_trial, trial_video, write_review
+from .trial import (
+    find_trial,
+    list_trials,
+    read_trial,
+    trial_captions,
+    trial_video,
+    write_review,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -376,6 +383,13 @@ def create_app(settings=None, engine=None, load_model=True):
             raise HTTPException(404, "This trial has no frames")
         # Open trials are re-encoded as frames arrive; closed ones are cached.
         return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/trials/{session}/{trial}/captions.vtt")
+    def trial_vtt(session: str, trial: str):
+        path = trial_captions(find_trial(trial_roots, session, trial))
+        if path is None:
+            raise HTTPException(404, "This trial has no frames")
+        return FileResponse(path, media_type="text/vtt", headers={"Cache-Control": "no-cache"})
 
     @app.put("/api/trials/{session}/{trial}/review")
     def review(session: str, trial: str, body: Review):

@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -41,6 +42,17 @@ def test_list_spans_both_roots_newest_first(app):
     trials = client.get("/api/trials").json()
     assert [t["id"] for t in trials] == ["01_130001", "01_120001"]
     assert trials[1]["session"] == "20261029T120000Z_ab" and trials[1]["verdict"] is None
+
+
+def test_open_trial_without_recent_writes_is_not_active(app):
+    client, _, tmp_path = app
+    folder = make_trial(tmp_path / "aria", "20261029T120000Z_ab", "06_open", outcome=None)
+    assert client.get("/api/trials/20261029T120000Z_ab/06_open").json()["trial"]["active"]
+    old = 1_700_000_000
+    for path in [folder / "frames", folder / "guidance.jsonl"]:
+        os.utime(path, (old, old))
+    trials = {t["id"]: t for t in client.get("/api/trials").json()}
+    assert trials["06_open"]["active"] is False  # Killed node: shown as interrupted.
 
 
 def test_detail_skips_a_cut_line(app):
@@ -127,6 +139,40 @@ def test_open_trial_video_is_re_encoded(app):
     first = client.get(url).content
     Image.new("RGB", (64, 48), "black").save(folder / "frames" / "3000.jpg")
     assert client.get(url).content != first
+
+
+def test_captions_follow_the_timeline(app):
+    client, folders, _ = app
+    folder = folders["live"]  # Frames start at 1000 ms; outcome completed.
+    events = [
+        {"t_ms": 1000, "kind": "goal", "text": "Clear the mat"},
+        {"t_ms": 1500, "kind": "tts", "text": "Pick up the <red> cup & go."},
+        {"t_ms": 2000, "kind": "plan_request", "frames": []},  # Not captioned.
+        {"t_ms": 12_000, "kind": "reply", "text": "done"},
+        {"t_ms": 13_000, "kind": "end", "outcome": "completed"},
+    ]
+    (folder / "guidance.jsonl").write_text("\n".join(map(json.dumps, events)) + "\n")
+    response = client.get("/api/trials/20261029T120000Z_ab/01_120001/captions.vtt")
+    assert response.status_code == 200 and response.headers["content-type"].startswith("text/vtt")
+    assert response.text.strip().split("\n\n")[1:] == [
+        "00:00:00.000 --> 00:00:01.500\nGoal: Clear the mat",  # 0.5 s gap: held 1.5 s.
+        "00:00:00.500 --> 00:00:06.500\nGuide: Pick up the &lt;red> cup &amp; go.",  # Capped.
+        "00:00:11.000 --> 00:00:12.500\nOperator: done",  # 1 s gap: held 1.5 s.
+        "00:00:12.000 --> 00:00:18.000\nTrial ended: completed",
+    ]
+    # Closed trial: cached in the folder next to video.mp4, for VLC.
+    assert (folder / "video.vtt").read_text() == response.text
+    (folder / "guidance.jsonl").write_text("")
+    assert (
+        client.get("/api/trials/20261029T120000Z_ab/01_120001/captions.vtt").text == response.text
+    )
+
+
+def test_trial_without_frames_has_no_captions(app):
+    client, _, tmp_path = app
+    folder = make_trial(tmp_path / "aria", "20261029T120000Z_ab", "05_empty", stamps=(1,))
+    (folder / "frames" / "1.jpg").unlink()
+    assert client.get("/api/trials/20261029T120000Z_ab/05_empty/captions.vtt").status_code == 404
 
 
 def test_trial_without_frames_has_no_video(app):

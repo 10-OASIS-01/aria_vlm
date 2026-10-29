@@ -45,6 +45,7 @@ client.close()
 | GET | `/api/trials` | Trial summaries from `ARIA_SESSIONS_DIR` and `.runtime/guidance`, newest first |
 | GET | `/api/trials/{session}/{trial}` | `trial.json`, events, review, frame count and the first frame's time |
 | GET | `/api/trials/{session}/{trial}/video.mp4` | Frames as H.264, timed by capture stamps; cached once the trial closes |
+| GET | `/api/trials/{session}/{trial}/captions.vtt` | WebVTT of goal, spoken instructions, replies, transcripts and notes, timed like the video |
 | PUT | `/api/trials/{session}/{trial}/review` | `{verdict: success\|fail\|null, notes}` (notes ≤ 10,000 characters) |
 | POST | `/api/sessions` | `{goal, source, task_id?}` → new session |
 | GET | `/api/sessions/{id}` | Goal, state, history, plans and client events |

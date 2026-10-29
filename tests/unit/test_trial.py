@@ -62,6 +62,7 @@ def test_events_steps_and_latency(tmp_path):
     recorder.open("Clear the mat", [])
     folder = recorder.folder
     recorder.event("plan_result", instruction="Pick up the pen.", client_roundtrip_ms=2000.0)
+    assert read(folder)[0]["steps"] == 1  # Written while the trial is still open.
     recorder.event("note", text="the cup slipped")
     recorder.event("plan_result", instruction="Put it down.", client_roundtrip_ms=4000.0)
     recorder.close("completed")

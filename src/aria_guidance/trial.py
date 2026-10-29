@@ -5,6 +5,7 @@
     guidance.jsonl  one event per line: goal, plan_request, plan_result, tts, reply, note, ...
     frames/<ms>.jpg the preview JPEGs, about 5 Hz
     video.mp4       frames/ encoded on first view by the backend, timed by the frame stamps
+    video.vtt       captions for video.mp4 from guidance.jsonl (VLC loads it with the video)
     review.json     verdict and notes; only the backend's Trials page writes it
 
 TrialRecorder is the node half; the functions below it serve the workbench.
@@ -102,12 +103,13 @@ class TrialRecorder:
     def event(self, kind, **fields):
         if not self.folder:
             return
-        if kind == "plan_result":
-            self.body["steps"] += 1
-            self.latencies.append(fields.get("client_roundtrip_ms", 0.0))
         line = json.dumps({"t_ms": time.time() * 1000, "kind": kind, **fields}, ensure_ascii=False)
         with open(self.folder / "guidance.jsonl", "a") as f:
             f.write(line + "\n")
+        if kind == "plan_result":
+            self.body["steps"] += 1
+            self.latencies.append(fields.get("client_roundtrip_ms", 0.0))
+            write_json(self.folder / "trial.json", self.body)  # Open trials show their steps.
 
     def close(self, outcome):
         """Ends the trial: completed, cancelled, replaced or aborted."""
@@ -149,6 +151,16 @@ def read_json(path, default=None):
         return default
 
 
+def is_active(folder):
+    """An open trial is still recording if its frames or events changed in the last 30 s.
+
+    A node killed without closing leaves its trial open forever; this tells that apart.
+    """
+    paths = [folder / "frames", folder / "guidance.jsonl"]
+    newest = max((p.stat().st_mtime for p in paths if p.exists()), default=0)
+    return time.time() - newest < 30
+
+
 def list_trials(roots):
     """Summaries of every trial, newest first."""
     found = []
@@ -158,7 +170,8 @@ def list_trials(roots):
             if trial is None:
                 continue
             review = read_json(path.parent / "review.json", {})
-            trial.update(session=path.parents[2].name, verdict=review.get("verdict"))
+            active = trial.get("outcome") is None and is_active(path.parent)
+            trial.update(session=path.parents[2].name, verdict=review.get("verdict"), active=active)
             found.append(trial)
     return sorted(found, key=lambda t: t.get("started_ms") or 0, reverse=True)
 
@@ -178,7 +191,11 @@ def read_trial(folder):
             continue  # A line cut short by a crash.
     stamps = frame_stamps(folder)
     return {
-        "trial": {**read_json(folder / "trial.json", {}), "session": folder.parents[1].name},
+        "trial": {
+            **read_json(folder / "trial.json", {}),
+            "session": folder.parents[1].name,
+            "active": is_active(folder),
+        },
         "events": events,
         "review": read_json(folder / "review.json", {"verdict": None, "notes": ""}),
         "frames": len(stamps),
@@ -190,6 +207,53 @@ def write_review(folder, verdict, notes):
     review = {"verdict": verdict, "notes": notes, "updated_at": time.time()}
     write_json(folder / "review.json", review)
     return review
+
+
+CAPTIONS = {
+    "goal": "Goal",
+    "tts": "Guide",
+    "reply": "Operator",
+    "transcript": "Heard",
+    "note": "Note",
+}
+
+
+def vtt_time(ms):
+    seconds = max(ms, 0) / 1000
+    return f"{int(seconds // 3600):02d}:{int(seconds % 3600 // 60):02d}:{seconds % 60:06.3f}"
+
+
+def trial_captions(folder):
+    """WebVTT of what was said and noted, timed like the video; cached once the trial closes.
+
+    Returns:
+        The video.vtt path, or None when the trial has no frames (and so no video).
+    """
+    target = folder / "video.vtt"
+    detail = read_trial(folder)
+    if target.exists() and detail["trial"].get("outcome") is not None:
+        return target
+    start = detail["video_start_ms"]
+    if start is None:
+        return None
+    cues = []
+    for event in detail["events"]:
+        if event["kind"] == "end":
+            cues.append((event["t_ms"] - start, f"Trial ended: {event.get('outcome')}"))
+        elif event["kind"] in CAPTIONS and event.get("text"):
+            cues.append((event["t_ms"] - start, f"{CAPTIONS[event['kind']]}: {event['text']}"))
+    cues.sort(key=lambda cue: cue[0])
+    lines = ["WEBVTT", ""]
+    for i, (at, text) in enumerate(cues):
+        gap = cues[i + 1][0] - at if i + 1 < len(cues) else 6000
+        # Until the next cue, but readable (>= 1.5 s) and not lingering (<= 6 s).
+        end = at + min(6000, max(1500, gap))
+        text = text.replace("&", "&amp;").replace("<", "&lt;")
+        lines += [f"{vtt_time(at)} --> {vtt_time(end)}", text, ""]
+    tmp = folder / "video.vtt.tmp"
+    tmp.write_text("\n".join(lines))
+    os.replace(tmp, target)
+    return target
 
 
 def trial_video(folder):

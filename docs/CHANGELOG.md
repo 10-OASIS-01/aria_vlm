@@ -2,6 +2,32 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-29 — Cleaner console, captions (commit "Make the console a set of views, add captions and camera strip")
+
+From a dual-agent design critique (23/40); see `.impeccable/critique/`.
+
+**Changed behavior**
+- The workbench is a set of views (Live, Trials, Try a task, Connect) and opens on Live. The Overview hero, "This week" milestones and the Experiments notebook are removed.
+- Live:
+  - shows the goal;
+  - shows a camera strip (Aria glasses or TEST CAMERA, with rate and frame age; the preview dims when frames are late);
+  - the band maps the node's momentary state first, so it never shows two contradictory instructions.
+- While a task runs, the goal form hides behind New goal. Replace goal and Cancel task each need a second press within 4 s.
+- Keyboard shortcuts work only in the Live view and never reach Trials or the trial video.
+- Trials:
+  - the open-trial badge reads Running (links to Live);
+  - test-camera trials are tagged and can be hidden;
+  - the heading counts trials without a verdict;
+  - an open trial whose files stopped changing for 30 s reads Interrupted.
+- Contrast: `--muted` is #5f6b66, badges are 11px with darker ink, and key hints are no longer faded. Every measured text is at least 4.5:1, and secondary controls are 44px tall.
+
+**Added**
+- `GET /api/trials/{session}/{trial}/captions.vtt`, shown by default on the trial video and written as `video.vtt` next to `video.mp4`.
+- `trial.json` is rewritten after each step, so open trials show their step count; list and detail responses carry `active`.
+
+**Fixed**
+- `scripts/service.sh start` refused to start right after a stop while connections sat in TIME_WAIT; its port check now uses `SO_REUSEADDR` like uvicorn.
+
 ## 2026-10-29 — Camera source in the console and trials (commit "Report which camera feeds guidance_node")
 
 **Added**
