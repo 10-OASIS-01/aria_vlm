@@ -26,7 +26,7 @@ From a second design critique, on the first-time workflow (24/40).
 - The band covers a model question ("Answer the question"), a missing camera ("No camera") and the warm-up countdown. It uses plain words: "Guidance stopped", not "Node offline".
 - Keys act only when focus is not on a control, so Space presses a focused button instead of starting push-to-talk. The camera switch takes arrow keys.
 - A failed process shows one line of cause, a log disclosure and a Dismiss button, instead of a traceback.
-- Setup (was Connect) describes the one-time setup. Trials explains each outcome on hover and counts real trials to review.
+- Setup (was Connect) describes the one-time setup; its text, the sidebar and the footer now reach at least 5:1 contrast at 11px or larger. Trials explains each outcome on hover and counts real trials to review.
 
 ## 2026-10-29 — Cleaner console, captions (commit "Make the console a set of views, add captions and camera strip")
 
