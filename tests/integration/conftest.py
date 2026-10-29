@@ -74,7 +74,10 @@ class Backend:
 
     def start(self):
         app = create_app(self.settings, engine=self.engine, load_model=False)
-        config = uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="warning")
+        # The node's command long-poll would otherwise hold each shutdown for up to 10 s.
+        config = uvicorn.Config(
+            app, host="127.0.0.1", port=self.port, log_level="warning", timeout_graceful_shutdown=1
+        )
         self.server = uvicorn.Server(config)
         self.thread = threading.Thread(target=self.server.run, daemon=True)
         self.thread.start()
@@ -86,7 +89,7 @@ class Backend:
 
 
 class Probe(Node):
-    """Plays the operator: publishes like Foxglove panels, collects /aria/tts and /guidance/state."""
+    """Plays the operator: publishes on the /guidance topics, collects /aria/tts and /guidance/state."""
 
     def __init__(self):
         super().__init__("probe")

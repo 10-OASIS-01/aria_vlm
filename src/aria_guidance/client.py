@@ -49,6 +49,18 @@ class GuidanceClient:
             json={"goal": goal, "history": history, "frames": frames, "live": live},
         )
 
+    def live_state(self, state):
+        return self.request("POST", "v1/live/state", json=state)
+
+    def live_preview(self, jpeg):
+        return self.request(
+            "PUT", "v1/live/preview", content=jpeg, headers={"Content-Type": "image/jpeg"}
+        )
+
+    def live_commands(self, wait=10.0):
+        # The server holds the request up to `wait` s; allow for that on top of the timeout.
+        return self.request("GET", "v1/live/commands", params={"wait": wait}, timeout=wait + 10)
+
     def feedback(self, session_id, event="done", text=""):
         return self.request(
             "POST", f"api/sessions/{session_id}/feedback", json={"event": event, "text": text}

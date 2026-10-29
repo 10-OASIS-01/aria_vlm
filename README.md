@@ -36,8 +36,6 @@ The existing Aria node **publishes three topics and subscribes to one**. Those a
 | `/guidance/talk` | `std_srvs/srv/SetBool` | Push-to-talk: `true` starts recording, `false` transcribes |
 | `/guidance/state` | `std_msgs/msg/String` | JSON `{state, detail, task, goal, instruction}`; transient-local |
 | `/guidance/transcript` | `std_msgs/msg/String` | What the recognizer heard |
-| `/guidance/task`, `/guidance/instruction` | `std_msgs/msg/String` | Task state and current instruction as plain text, for Foxglove; transient-local |
-| `/guidance/preview/compressed` | `sensor_msgs/msg/CompressedImage` | The 640 px JPEG sent to the model, about 5 Hz |
 
 Topic names for vision, audio and TTS are configurable.
 
@@ -189,15 +187,14 @@ For a backend behind a prefix, pass the complete base URL, for example `backend_
 
 ### Operator console
 
-`guidance.launch.py` also starts `foxglove_bridge` on port 8765. It forwards only `/guidance/*`, `/aria/tts` and `/rosout`, and accepts publishing only on `/guidance/*`. In Foxglove, open a connection to `ws://localhost:8765` (or the ROS host's address) and import [operator_layout.json](ros2_ws/src/aria_guidance_ros/foxglove/operator_layout.json). It shows:
+Open the workbench's **Live** section, `http://<backend>:8785/#live`. guidance_node connects to the backend it already uses for planning and relays its state, the 640 px camera preview, and your commands, so the console works from any machine that can reach the backend. It shows:
 
-- the task state as a full-width colour band (`/guidance/task`);
-- the 640 px preview the model sees (`/guidance/preview/compressed`, about 5 Hz);
-- the current instruction in large text (`/guidance/instruction`);
-- Done and Next, Talk on and Talk off, then Repeat and Cancel;
-- Goal and Note editors, and the node's log (states, transcripts, notes).
+- the task state as a full-width band (Observing, Thinking, Act then say done, Confirm);
+- the camera view the model sees, and the current instruction in large text;
+- Done and Next (keys D and N), Hold to talk (or hold Space), Repeat (R) and Cancel;
+- Goal and Note inputs, the last thing heard, and a link to the trial in **Trials**.
 
-Foxglove has no hold-to-talk button. For hands-free speech, hold Space in `tools/ptt.py`. Rerun (`viewer.enable` in aria_node) stays the device-debug viewer; keep it off during trials.
+The keys work while the Live section is on screen and no text field has focus. Commands are refused while guidance_node is not connected, so a stale "done" never fires later. Rerun (`viewer.enable` in aria_node) stays the device-debug viewer; keep it off during trials.
 
 ### From a terminal
 

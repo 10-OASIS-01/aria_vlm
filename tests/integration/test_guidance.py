@@ -112,23 +112,25 @@ def test_shutdown_aborts_the_trial(probe, node, camera, backend, tmp_path):
     assert trials(tmp_path)[0][0]["outcome"] == "aborted"
 
 
-def test_preview_and_plain_topics_for_foxglove(probe, node, camera, backend):
-    from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
-    from sensor_msgs.msg import CompressedImage
-    from std_msgs.msg import String
+def test_web_console_drives_the_node(node, camera, backend, probe):
+    """What the Live section does: read state and preview, post commands, through the backend."""
+    import httpx
 
-    previews, plain = [], {}
-    probe.create_subscription(
-        CompressedImage, "/guidance/preview/compressed", previews.append, qos_profile_sensor_data
-    )
-    latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-    for name in ("task", "instruction"):
-        probe.create_subscription(
-            String, f"/guidance/{name}", lambda m, n=name: plain.update({n: m.data}), latched
-        )
-    wait_for(lambda: previews)
-    assert previews[0].format == "jpeg" and bytes(previews[0].data[:2]) == b"\xff\xd8"
-    probe.publish("/guidance/goal", "Pick up the pen")
-    heard(probe, node, 1)
-    wait_for(lambda: plain.get("instruction") == "Pick up the pen.")
-    assert plain["task"] == "awaiting_feedback"
+    web = httpx.Client(base_url=backend.url, trust_env=False)
+    wait_for(lambda: web.get("/api/live/state").json()["node_online"])
+    wait_for(lambda: web.get("/api/live/preview.jpg").status_code == 200)
+    assert web.get("/api/live/preview.jpg").content[:2] == b"\xff\xd8"
+    command = {"kind": "goal", "text": "Pick up the pen"}
+    assert web.post("/api/live/command", json=command).status_code == 202
+    assert heard(probe, node, 1) == "Pick up the pen."
+    wait_for(lambda: web.get("/api/live/state").json().get("task") == "awaiting_feedback")
+    state = web.get("/api/live/state").json()
+    assert state["instruction"] == "Pick up the pen." and state["trial"]["id"]
+    web.post("/api/live/command", json={"kind": "note", "text": "from the console"})
+    wait_for(lambda: web.get("/api/live/state").json().get("state") == "note")
+    # No glasses microphone here: talk starts recording, and the release finds no audio.
+    web.post("/api/live/command", json={"kind": "talk", "text": "on"})
+    wait_for(lambda: web.get("/api/live/state").json().get("recording"))
+    web.post("/api/live/command", json={"kind": "talk", "text": "off"})
+    wait_for(lambda: web.get("/api/live/state").json().get("state") == "silence")
+    web.close()

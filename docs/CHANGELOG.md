@@ -2,6 +2,21 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-29 — Live console in the workbench, Foxglove removed (commit "Replace the Foxglove console with a Live section in the workbench")
+
+**Changed behavior**
+- The operator console is the workbench's **Live** section (`/#live`), next to Trials. It shows the task state band, the camera preview and the instruction. Its controls: Done, Next, a hold-to-talk button, Repeat, Cancel, Goal and Note. Keys: D, N and R, and hold Space to talk.
+- guidance_node links to the console through the backend it already uses: it pushes its state (on change and every 2 s) and each preview JPEG, and long-polls for commands. The relay (`aria_guidance/live.py`) holds no task state.
+- Console commands are refused (503) while the node is not connected, instead of being queued.
+- `/guidance/talk` reports recording, transcribing and refusals on `/guidance/state`; the state JSON gains `recording`, `heard` and `trial`.
+
+**Removed**
+- `foxglove_bridge` from `guidance.launch.py`, `foxglove/operator_layout.json`, and the Foxglove-only topics `/guidance/task`, `/guidance/instruction` and `/guidance/preview/compressed`.
+
+**Upgrade notes**
+- Rebuild (`colcon build --symlink-install --packages-select aria_guidance_ros`) and restart the backend and guidance_node. Delete `install/aria_guidance_ros/share/aria_guidance_ros/foxglove` if it remains.
+- A backend restart now waits up to the node's 10 s command poll before the port is free.
+
 ## 2026-10-29 — Trials review page (commit "Add Trials review page to the workbench")
 
 **Added**

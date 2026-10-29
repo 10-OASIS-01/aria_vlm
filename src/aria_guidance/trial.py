@@ -39,6 +39,7 @@ class TrialRecorder:
         self.session_root, self.fallback_root = Path(session_root), Path(fallback_root)
         self.fallback = None  # One fallback folder per node run, made on first use.
         self.folder, self.body, self.latencies = None, None, []
+        self.last_ref = None  # {session, id} of the newest trial, open or closed, for the console.
 
     def session_folder(self):
         """The newest aria_node session still streaming, else this run's fallback folder."""
@@ -72,6 +73,7 @@ class TrialRecorder:
         index = len([p for p in trials.iterdir() if p.is_dir()]) + 1
         self.folder = trials / f"{index:02d}_{datetime.now():%H%M%S}"
         (self.folder / "frames").mkdir(parents=True)
+        self.last_ref = {"session": self.folder.parents[1].name, "id": self.folder.name}
         for frame in frames:
             self.frame_path(frame.timestamp_ms).write_bytes(frame.jpeg)
         ns = time.time_ns()

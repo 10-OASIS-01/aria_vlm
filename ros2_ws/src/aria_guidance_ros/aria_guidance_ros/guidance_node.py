@@ -1,21 +1,24 @@
 """Guidance node: owns the task, calls the stateless backend. Network work stays off ROS callbacks.
 
 The task (aria_guidance.task) is only touched from ROS callbacks, which run one at a time; pool
-threads do HTTP and hand results back through `messages`, drained by `tick`.
+threads do HTTP and hand results back through `messages`, drained by `tick`. Two more threads link
+the node to the web console through the backend: one pushes state and preview, one pulls commands.
 """
 
 import json
 import logging
 import queue
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import httpx
 import numpy as np
 import rclpy
 from aria_msgs.msg import Audio
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
-from sensor_msgs.msg import CompressedImage, Image
+from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
 
@@ -29,7 +32,7 @@ LOGGER = logging.getLogger(__name__)
 
 # The model only proposes completion; the person closes the task by confirming.
 CONFIRM_HINT = " Say done to confirm, or next to continue."
-# Late joiners (Foxglove, ptt.py) get the current state at once.
+# Late joiners (ptt.py, ros2 topic echo) get the current state at once.
 LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
 
@@ -71,13 +74,11 @@ class GuidanceNode(Node):
         self.audio_started = 0.0
         self.audio_busy = False
         self.last_wait_log = 0.0
+        self.last_heard = None
+        self.closing = threading.Event()
+        self.console_wake = threading.Event()
+        self.console_state, self.console_preview = None, None
         self.state_pub = self.create_publisher(String, "/guidance/state", LATCHED)
-        # Plain strings for Foxglove panels, which cannot read fields inside the state JSON.
-        self.task_pub = self.create_publisher(String, "/guidance/task", LATCHED)
-        self.instruction_pub = self.create_publisher(String, "/guidance/instruction", LATCHED)
-        self.preview_pub = self.create_publisher(
-            CompressedImage, "/guidance/preview/compressed", qos_profile_sensor_data
-        )
         self.transcript_pub = self.create_publisher(String, "/guidance/transcript", 10)
         self.tts_pub = self.create_publisher(String, self.config["tts_topic"], 10)
         self.create_subscription(
@@ -89,7 +90,9 @@ class GuidanceNode(Node):
         self.create_subscription(String, "/guidance/note", lambda m: self.note(m.data), 10)
         self.create_service(SetBool, "/guidance/talk", self.on_talk)
         self.create_timer(0.2, self.tick)
-        self.status("idle", "Publish a goal to /guidance/goal or say one with /guidance/talk")
+        self.status("idle", "Set a goal in the console, on /guidance/goal, or by talking")
+        for target in (self.console_push, self.console_pull):
+            threading.Thread(target=target, daemon=True, name=target.__name__).start()
 
     def status(self, state, detail):
         last = self.task.last
@@ -99,10 +102,13 @@ class GuidanceNode(Node):
             "task": self.task.state,
             "goal": self.task.goal,
             "instruction": last["instruction"] if last else None,
+            "recording": self.audio_active,
+            "heard": self.last_heard,
+            "trial": self.trial.last_ref,
         }
         self.state_pub.publish(String(data=json.dumps(body, ensure_ascii=False)))
-        self.task_pub.publish(String(data=self.task.state))
-        self.instruction_pub.publish(String(data=body["instruction"] or ""))
+        self.console_state = body
+        self.console_wake.set()
         self.get_logger().info(f"{state}: {detail}")
         if state != self.last_state:
             self.last_state = state
@@ -127,10 +133,9 @@ class GuidanceNode(Node):
             return
         if self.frames.add(ts, jpeg):
             self.last_image_ms = ts
-            # The 640 px JPEG already made for the model; Foxglove never pulls the raw frames.
-            self.preview_pub.publish(
-                CompressedImage(header=message.header, format="jpeg", data=jpeg)
-            )
+            # The 640 px JPEG already made for the model; the console never sees raw frames.
+            self.console_preview = jpeg
+            self.console_wake.set()
             path = self.trial.frame_path(ts)
             if path:
                 self.pool.submit(path.write_bytes, jpeg)
@@ -250,30 +255,73 @@ class GuidanceNode(Node):
         self.speaking_until = time.monotonic() + estimated
 
     def on_talk(self, request, response):
-        if request.data:
+        response.success, response.message = self.talk(request.data)
+        return response
+
+    def talk(self, on):
+        """Push-to-talk on the glasses' microphone; returns (accepted, message)."""
+        if on:
             if (
                 self.audio_active
                 or self.audio_busy
                 or self.planning
                 or time.monotonic() < self.speaking_until
             ):
-                response.success, response.message = (
-                    False,
-                    "Wait for planning, recording, transcription or speech to finish",
-                )
-                return response
+                message = "Wait for planning, recording, transcription or speech to finish"
+                self.status("talk_refused", message)
+                return False, message
             self.audio_active, self.audio_chunks, self.audio_rate = True, [], 0
             self.audio_started = time.monotonic()
-            response.success, response.message = (
-                True,
-                "Recording; call with data: false when finished",
-            )
-        else:
-            response.success = self.finish_audio()
-            response.message = (
-                "Transcribing" if response.success else "No valid microphone audio was captured"
-            )
-        return response
+            self.status("recording", "Recording; release to send")
+            return True, "Recording; call with data: false when finished"
+        if not self.audio_active:
+            return False, "Not recording"  # E.g. the release after a refused start.
+        if self.finish_audio():
+            self.status("transcribing", "Recognizing speech")
+            return True, "Transcribing"
+        self.status("silence", "No microphone audio was captured")
+        return False, "No valid microphone audio was captured"
+
+    def console_command(self, command):
+        kind, text = command["kind"], command["text"]
+        if kind == "goal":
+            self.start(text)
+        elif kind == "reply":
+            self.reply(text)
+        elif kind == "note":
+            self.note(text)
+        elif kind == "talk":
+            self.talk(text == "on")
+
+    def console_push(self):
+        """Sends state on change (and every 2 s, as a heartbeat) and each new preview frame."""
+        sent, sent_at, failing = None, 0.0, False
+        while not self.closing.is_set():
+            self.console_wake.wait(2.0)
+            self.console_wake.clear()
+            state, preview = self.console_state, self.console_preview
+            self.console_preview = None
+            try:
+                if state is not None and (state is not sent or time.monotonic() - sent_at > 2):
+                    self.client.live_state(state)
+                    sent, sent_at = state, time.monotonic()
+                if preview:
+                    self.client.live_preview(preview)
+                failing = False
+            except (httpx.HTTPError, RuntimeError) as e:  # RuntimeError: client closed.
+                if not failing:
+                    self.get_logger().warning(f"Web console unreachable: {e}")
+                failing = True
+                self.closing.wait(2.0)
+
+    def console_pull(self):
+        """Long-polls the backend for console commands; tick runs them on the ROS thread."""
+        while not self.closing.is_set():
+            try:
+                for command in self.client.live_commands(wait=10.0):
+                    self.messages.put(("console", None, command))
+            except (httpx.HTTPError, RuntimeError):
+                self.closing.wait(2.0)  # Backend down; console_push logs it.
 
     def on_audio(self, message):
         if not self.audio_active or message.sample_rate == 0:
@@ -322,6 +370,9 @@ class GuidanceNode(Node):
     def tick(self):
         while not self.messages.empty():
             kind, epoch, payload = self.messages.get()
+            if kind == "console":
+                self.console_command(payload)
+                continue
             if kind in {"plan", "plan_error"}:
                 self.planning = False
             if epoch != self.task.epoch:
@@ -344,7 +395,7 @@ class GuidanceNode(Node):
             elif kind == "transcript":
                 text = payload["text"]
                 self.transcript_pub.publish(String(data=text))
-                self.get_logger().info(f"heard: {text}")
+                self.last_heard = text
                 self.record("transcript", text=text, duration_ms=payload.get("duration_ms"))
                 if text:
                     self.reply(text)
@@ -358,6 +409,7 @@ class GuidanceNode(Node):
             self.finish_audio()
 
     def close(self):
+        self.closing.set()
         self.task.cancel()
         self.trial.close("aborted")
         self.pool.shutdown(wait=True, cancel_futures=True)

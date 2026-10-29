@@ -36,6 +36,12 @@ client.close()
 | GET | `/api/status` | Model, ASR, latest evaluation and recent sessions |
 | POST | `/v1/plan` | `{goal, history, frames, live?}` → next instruction. Stateless: the caller owns the task |
 | POST | `/v1/asr` | Same as `/api/transcribe` |
+| POST | `/v1/live/state` | guidance_node's state JSON, on change and every 2 s |
+| PUT | `/v1/live/preview` | guidance_node's newest preview JPEG |
+| GET | `/v1/live/commands?wait=` | guidance_node long-polls for console commands (up to 25 s) |
+| GET | `/api/live/state?after=&wait=` | The console long-polls the state; adds `version` and `node_online` |
+| GET | `/api/live/preview.jpg` | Newest preview; 404 while the node is offline |
+| POST | `/api/live/command` | `{kind: goal\|reply\|note\|talk, text}`; 503 while the node is offline |
 | GET | `/api/trials` | Trial summaries from `ARIA_SESSIONS_DIR` and `.runtime/guidance`, newest first |
 | GET | `/api/trials/{session}/{trial}` | `trial.json`, events, review, frame count and the first frame's time |
 | GET | `/api/trials/{session}/{trial}/video.mp4` | Frames as H.264, timed by capture stamps; cached once the trial closes |

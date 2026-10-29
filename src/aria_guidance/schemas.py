@@ -55,6 +55,14 @@ class PlanV1(Window):
     live: bool = True
 
 
+class LiveCommand(StrictModel):
+    """An operator action from the web console, relayed to guidance_node."""
+
+    kind: Literal["goal", "reply", "note", "talk"]
+    # The goal, reply or note text; "on" or "off" for talk.
+    text: str = Field(default="", max_length=1500)
+
+
 class Review(StrictModel):
     verdict: Literal["success", "fail"] | None = None
     notes: str = Field(default="", max_length=10_000)

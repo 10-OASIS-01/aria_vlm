@@ -14,6 +14,7 @@
     <a href="#overview"><span>◫</span> Overview</a>
     <a href="#experiments"><span>◉</span> Experiments</a>
     <a href="#workbench"><span>▷</span> Try a task</a>
+    <a href="#live"><span>●</span> Live</a>
     <a href="#trials"><span>▤</span> Trials</a>
     <a href="#connect"><span>⇄</span> Connect Aria</a>
   </nav>
@@ -59,6 +60,25 @@
         <p id="trial-status" role="status" class="form-status">Checking model availability…</p>
       </form>
       <article class="card instruction-panel"><div class="card-top"><span class="eyebrow">NEXT INSTRUCTION</span><span class="badge subtle" id="instruction-state">Waiting for a clip</span></div><img id="clip-preview" alt="Latest sampled observation" hidden><div class="instruction-body"><span class="quote-mark">“</span><p id="instruction-text">A clear observation.<br>A useful next step.</p></div><div class="instruction-meta" id="instruction-meta">Your task session will appear here.</div></article>
+    </div>
+  </section>
+
+  <section id="live" aria-labelledby="live-title">
+    <div class="heading-row"><div><h2 id="live-title">Live</h2><p>Run a trial on the glasses. Every goal set here is recorded under Trials.</p></div><span class="badge" id="live-node">Connecting</span></div>
+    <div class="live-band" id="live-band" data-tone="off" role="status" aria-live="polite"><strong id="live-label">Connecting</strong><span id="live-detail">Waiting for guidance_node.</span></div>
+    <div class="live-grid">
+      <article class="card live-view">
+        <div class="live-preview"><img id="live-preview" alt="Live view from the glasses' camera, as sent to the model" hidden><p id="live-nopreview">No camera view yet. guidance_node shows the glasses' camera here once it is running.</p></div>
+        <div class="live-instruction"><span>Instruction</span><p id="live-instruction">No instruction yet.</p></div>
+      </article>
+      <div class="card live-controls">
+        <div class="live-primary"><button type="button" class="button dark live-big" id="live-done" aria-keyshortcuts="D">Done <kbd>D</kbd></button><button type="button" class="button light live-big" id="live-next" aria-keyshortcuts="N">Next <kbd>N</kbd></button></div>
+        <button type="button" class="live-talk" id="live-talk" aria-keyshortcuts="Space">Hold to talk <kbd>Space</kbd></button>
+        <div class="live-secondary"><button type="button" class="button light" id="live-repeat" aria-keyshortcuts="R">Repeat <kbd>R</kbd></button><button type="button" class="button light live-cancel" id="live-cancel">Cancel task</button></div>
+        <form class="live-form" id="live-goal-form"><label for="live-goal">Goal</label><textarea id="live-goal" rows="2" minlength="3" maxlength="1500" required placeholder="Pick up the black marker on the grey table"></textarea><button type="submit" class="button dark">Set goal</button></form>
+        <form class="live-form" id="live-note-form"><label for="live-note">Note for this trial</label><div class="live-inline"><input id="live-note" maxlength="1500" required placeholder="The cup slipped off the edge"><button type="submit" class="button light">Add note</button></div></form>
+        <dl class="live-facts"><div><dt>Heard</dt><dd id="live-heard">Nothing yet</dd></div><div><dt>Trial</dt><dd id="live-trial">None yet</dd></div></dl>
+      </div>
     </div>
   </section>
 

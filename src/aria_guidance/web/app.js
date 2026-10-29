@@ -103,6 +103,69 @@ $("#trial-form").onsubmit=async(e)=>{
 function uuidFallback(){const a=crypto.getRandomValues(new Uint8Array(16));a[6]=(a[6]&15)|64;a[8]=(a[8]&63)|128;const s=Array.from(a,x=>x.toString(16).padStart(2,"0")).join("");return `${s.slice(0,8)}-${s.slice(8,12)}-${s.slice(12,16)}-${s.slice(16,20)}-${s.slice(20)}`;}
 $("#confirm-button").onclick=async()=>{const current=state.session;if(!current||state.busy)return;state.busy=true;try{await api(`api/sessions/${current.id}/feedback`,{method:"POST",body:JSON.stringify({event:"confirm"})});state.session=null;$("#confirm-button").hidden=true;$("#instruction-state").textContent="Task complete";$("#trial-status").textContent="Goal complete. Reset to start another task.";}catch(err){toast(err.message);}finally{state.busy=false;}};
 $("#cancel-button").onclick=async()=>{state.epoch++;const old=state.session;state.session=null;$("#confirm-button").hidden=true;$("#trial-status").textContent="Task reset. Start with a new goal and clip.";$("#instruction-text").textContent="Ready for a new task.";$("#instruction-state").textContent="Waiting for a clip";$("#clip-preview").hidden=true;$("#clip").value="";if(old){try{await api(`api/sessions/${old.id}/feedback`,{method:"POST",body:JSON.stringify({event:"cancel"})});}catch(err){toast(err.message);}}};
+// Live: the operator console. guidance_node owns the task; the backend relays its state and our commands.
+const live={state:null,visible:false,talking:false};
+const LIVE_BANDS={idle:["No goal","off"],ready:["Observing","info"],planning:["Thinking","wait"],awaiting_feedback:["Act, then say done","go"],awaiting_confirmation:["Confirm: done or next","ask"],completed:["Complete","go"],error:["Error: press Next to retry","stop"],cancelled:["Cancelled","off"]};
+const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+function renderLive(s){
+  live.state=s;
+  const online=Boolean(s&&s.node_online),active=online&&!["idle","completed","cancelled"].includes(s.task);
+  $("#live-node").textContent=s?(online?"Node connected":"Node offline"):"Service offline";$("#live-node").className=`badge ${online?"ready":"error"}`;
+  let [label,tone]=online?(LIVE_BANDS[s.task]||[s.task,"info"]):["Node offline","off"];
+  if(online&&s.state==="recording")[label,tone]=["Listening","stop"];else if(online&&s.state==="transcribing")[label,tone]=["Hearing","wait"];
+  $("#live-band").dataset.tone=tone;$("#live-label").textContent=label;
+  $("#live-detail").textContent=online?(s.detail||""):s?"Start it with: ros2 launch aria_guidance_ros guidance.launch.py":"The backend is not answering.";
+  $("#live-instruction").textContent=online&&s.instruction?s.instruction:"No instruction yet.";
+  $("#live-heard").textContent=online&&s.heard?`“${s.heard}”`:"Nothing yet";
+  $("#live-trial").innerHTML=online&&s.trial?`<a class="text-link" href="#trials/${encodeURIComponent(s.trial.session)}/${encodeURIComponent(s.trial.id)}">${esc(s.trial.id)} · open in Trials</a>`:"None yet";
+  $("#live-done").disabled=$("#live-next").disabled=!active;$("#live-cancel").disabled=!active;
+  $("#live-repeat").disabled=!(active&&s.instruction);$("#live-talk").disabled=!online;
+  document.querySelectorAll("#live-goal-form button,#live-note-form button").forEach(b=>b.disabled=!online);
+  $("#live-talk").classList.toggle("on",online&&Boolean(s.recording));
+  $("#live-talk").firstChild.textContent=online&&s.recording?"Listening, release to send ":"Hold to talk ";
+}
+async function pollLive(){
+  let after=-1;
+  for(;;){
+    try{const s=await api(`api/live/state?after=${after}&wait=5`);after=s.version;renderLive(s);}
+    catch(err){renderLive(null);await sleep(2000);}
+  }
+}
+function pollPreview(){
+  const img=$("#live-preview"),next=(ms)=>setTimeout(pollPreview,ms);
+  if(!live.visible||document.hidden||!live.state?.node_online){next(1000);return;}
+  const probe=new Image();
+  probe.onload=()=>{img.src=probe.src;img.hidden=false;$("#live-nopreview").hidden=true;next(150);};
+  probe.onerror=()=>{img.hidden=true;$("#live-nopreview").hidden=false;next(1500);};
+  probe.src=localURL(`api/live/preview.jpg?t=${Date.now()}`);
+}
+async function sendLive(kind,text=""){
+  try{await api("api/live/command",{method:"POST",body:JSON.stringify({kind,text})});return true;}
+  catch(err){toast(err.message);return false;}
+}
+$("#live-done").onclick=()=>sendLive("reply","done");
+$("#live-next").onclick=()=>sendLive("reply","next");
+$("#live-repeat").onclick=()=>sendLive("reply","repeat");
+$("#live-cancel").onclick=()=>sendLive("reply","cancel");
+$("#live-goal-form").onsubmit=async(e)=>{e.preventDefault();const goal=$("#live-goal").value.trim();if(goal.length<3){toast("A goal needs at least 3 characters.");return;}if(await sendLive("goal",goal))$("#live-goal").value="";};
+$("#live-note-form").onsubmit=async(e)=>{e.preventDefault();const note=$("#live-note").value.trim();if(note&&await sendLive("note",note))$("#live-note").value="";};
+function talk(on){if(live.talking===on||$("#live-talk").disabled)return;live.talking=on;$("#live-talk").classList.toggle("held",on);sendLive("talk",on?"on":"off");}
+const talkButton=$("#live-talk");
+talkButton.addEventListener("pointerdown",(e)=>{talkButton.setPointerCapture(e.pointerId);talk(true);});
+["pointerup","pointercancel","lostpointercapture"].forEach(type=>talkButton.addEventListener(type,()=>talk(false)));
+talkButton.addEventListener("keydown",(e)=>{if((e.key===" "||e.key==="Enter")&&!e.repeat){e.preventDefault();talk(true);}});
+talkButton.addEventListener("keyup",(e)=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();talk(false);}});
+const typing=(el)=>el&&(el.matches("input,textarea,select")||el.isContentEditable);
+document.addEventListener("keydown",(e)=>{
+  if(!live.visible||typing(e.target)||e.ctrlKey||e.metaKey||e.altKey)return;
+  if(e.key===" "&&e.target!==talkButton){e.preventDefault();if(!e.repeat)talk(true);}
+  else if(!e.repeat&&{d:"#live-done",n:"#live-next",r:"#live-repeat"}[e.key.toLowerCase()]){const b=$({d:"#live-done",n:"#live-next",r:"#live-repeat"}[e.key.toLowerCase()]);if(!b.disabled)b.click();}
+});
+document.addEventListener("keyup",(e)=>{if(e.key===" "&&e.target!==talkButton&&live.talking)talk(false);});
+window.addEventListener("blur",()=>talk(false));
+new IntersectionObserver(entries=>{for(const e of entries)live.visible=e.isIntersecting;}).observe($("#live"));
+pollLive();pollPreview();
+
 // Trials: review of what guidance_node recorded, one folder per goal.
 const trials={list:[],current:null,detail:null,events:[]};
 const OUTCOMES={completed:["Completed","ready"],cancelled:["Cancelled","subtle"],replaced:["Replaced","subtle"],aborted:["Aborted","error"]};

@@ -10,14 +10,23 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from .audio import SpeechRecognizer
 from .config import Settings
 from .engine import ModelBusy, QwenEngine
 from .frames import decode_image, encode_jpeg
-from .schemas import ClientEvent, Feedback, PlanRequest, PlanV1, Review, SessionCreate
+from .live import LiveRelay
+from .schemas import (
+    ClientEvent,
+    Feedback,
+    LiveCommand,
+    PlanRequest,
+    PlanV1,
+    Review,
+    SessionCreate,
+)
 from .store import Conflict, Store
 from .trial import find_trial, list_trials, read_trial, trial_video, write_review
 
@@ -77,6 +86,7 @@ def create_app(settings=None, engine=None, load_model=True):
     reports = settings.data_dir / "reports"
     reports.mkdir(exist_ok=True)
     trial_roots = [settings.sessions_dir, settings.data_dir / "guidance"]
+    live = LiveRelay()
 
     @asynccontextmanager
     async def lifespan(app):
@@ -306,6 +316,50 @@ def create_app(settings=None, engine=None, load_model=True):
             raise HTTPException(422, str(e)) from e
         except RuntimeError as e:
             raise HTTPException(503, str(e)) from e
+
+    @app.post("/v1/live/state")
+    async def live_state_push(request: Request):
+        """guidance_node's state, the same JSON it publishes on /guidance/state."""
+        try:
+            state = await request.json()
+        except ValueError as e:
+            raise HTTPException(422, "State must be a JSON object") from e
+        if not isinstance(state, dict):
+            raise HTTPException(422, "State must be a JSON object")
+        await live.push_state(state)
+        return {"version": live.version}
+
+    @app.put("/v1/live/preview")
+    async def live_preview_push(request: Request):
+        jpeg = await request.body()
+        if not jpeg.startswith(b"\xff\xd8"):
+            raise HTTPException(422, "Preview must be a JPEG")
+        await live.push_preview(jpeg)
+        return {"saved": True}
+
+    @app.get("/v1/live/commands")
+    async def live_commands(wait: float = 10.0):
+        return await live.take_commands(min(max(wait, 0.0), 25.0))
+
+    @app.get("/api/live/state")
+    async def live_state(after: int = -1, wait: float = 0.0):
+        return await live.wait_state(after, min(max(wait, 0.0), 25.0))
+
+    @app.get("/api/live/preview.jpg")
+    def live_preview():
+        if live.preview is None or not live.node_online():
+            raise HTTPException(404, "No live preview; is guidance_node running?")
+        return Response(
+            live.preview, media_type="image/jpeg", headers={"Cache-Control": "no-store"}
+        )
+
+    @app.post("/api/live/command", status_code=202)
+    async def live_command(body: LiveCommand):
+        if not live.node_online():
+            # Refused, not queued: a "done" must not fire minutes later when the node returns.
+            raise HTTPException(503, "guidance_node is not connected to this backend")
+        await live.add_command(body.model_dump())
+        return {"queued": True}
 
     @app.get("/api/trials")
     def trials():
