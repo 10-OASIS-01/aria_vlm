@@ -106,7 +106,18 @@ bash scripts/service.sh stop
 
 Open **http://127.0.0.1:8785/**. `/api/health` checks the process; `/api/ready` returns HTTP 200 only after the model has loaded. Startup runs in the background so the workbench remains available while weights load. Use **one server worker**: every worker would load its own model.
 
-The model uses BF16, SDPA, `enable_thinking=False`, greedy decoding and at most 96 output tokens. The default image budget is 131,072 pixels per frame. `ARIA_MAX_PIXELS` can increase this for small objects at a cost in memory and latency. See [validation notes](docs/validation.md) for the measured environment and limits.
+The model uses BF16, SDPA, `enable_thinking=False`, greedy decoding and at most 96 output tokens. Greedy decoding deliberately departs from the model card's sampling recommendation, to keep the guidance loop deterministic. See [validation notes](docs/validation.md) for the measured environment and limits.
+
+The 20 frames of each observation reach the model as one 2 fps video (`ARIA_INPUT_MODE=video`). Qwen's processor adds `<t seconds>` timestamps and packs two frames per temporal patch, so a request uses half the visual tokens of 20 separate images (`ARIA_INPUT_MODE=images`). The default budget, `ARIA_MAX_PIXELS=307200`, keeps the bridge's full 640×480 frames; at the earlier 131,072 pixels the model missed small objects such as a pen on a mat. On an RTX 5090 this configuration measured about 0.8 s of model time per request on replayed observations, against about 1.3 s for 640×480 as separate images.
+
+To compare prompts, input modes or pixel budgets, replay saved observations through the local model. No server or ROS is involved:
+
+```bash
+python scripts/replay_eval.py --cases .runtime/eval_cases.json \
+    --modes images video --pixels 131072 307200 --prompt-file old=path/to/prompt.txt
+```
+
+Each case names a saved plan whose frames are replayed (`.runtime/runs/<plan id>/`), the goal and dialogue, the expected status and words that must appear. See the docstring of [replay_eval.py](scripts/replay_eval.py) for the format. Stop the backend first, or make sure the GPU has room for a second copy of the model.
 
 ## 2. Reach a backend on another workstation
 
@@ -197,6 +208,38 @@ The bridge buffers the existing `/aria/audio` blocks, downmixes channels, conver
 
 Upstream does not report playback completion or offer a TTS cancel acknowledgement. The bridge sends one instruction per user request, deduplicates request IDs, and uses an estimated speaking interval to guard repeats and recording. Cancelling suppresses **unsent** planner output; it cannot retract speech already handed to the glasses.
 
+### Speaking to the planner
+
+Start recording, speak normally, then stop recording. No wake word or special phrasing is needed. What happens to the transcript depends on whether a task is active and on the exact words:
+
+| Say | When | Effect |
+| --- | --- | --- |
+| A goal in plain words, e.g. "Pick up the black marker on the table" | No active task | Becomes the goal |
+| `next` or `done` | Task active | Requests the next step |
+| `done` or `yes` | After "The task looks complete. Say done to confirm, or next to continue." | Confirms and closes the task |
+| `next`, or what is still missing | After that same prompt | The task continues with a new step |
+| `repeat` | Task active | Speaks the last instruction again |
+| `cancel` or `stop` | Any time | Ends the task |
+| `goal: ...` | Task active | Replaces the goal |
+| Anything else, e.g. "I can't find it" | Task active | Sent as feedback, then a new step is planned |
+
+- A command must be the whole recording. Case and trailing punctuation are ignored (`Next.` works), but "next step please" counts as feedback. It still triggers a new step, with the words attached.
+- To change the goal by voice, say `cancel`, then the new goal as a separate recording. `goal: ...` only matches when the recognizer writes the colon; it may produce "Goal, ..." instead.
+- Wait about ten seconds after the camera starts before giving the first goal, so a complete observation window exists.
+- `/planner/listen` refuses to start while planning, transcription or the estimated playback of the previous instruction is active. Retry once it finishes.
+- `ros2 service call` takes a second or two to start. Begin speaking only after the start call returns, or the first words are lost.
+- `/planner/transcript` shows exactly what was recognized. Check it first when a command has no effect.
+
+#### Microphone level
+
+On the Aria Gen 2 glasses tested here, `/aria/audio` carries 8 channels at 16 kHz, with 16-bit samples in the upper half of each int32. After the bridge mixes the channels down, room noise measured about 0.0002 RMS of full scale and normal speech about 0.0006. The backend treats a clip below 0.002 RMS as silence and returns an empty transcript without running ASR. With the default `audio_gain: 1.0`, every recording therefore comes back empty.
+
+Set `audio_gain: 16.0` in [bridge.yaml](ros2_ws/src/aria_planner_bridge/config/bridge.yaml), or in a copy passed with `config:=...`. The bridge reads the value only at startup, so restart it and confirm:
+
+```bash
+ros2 param get /planner_bridge audio_gain   # Double value is: 16.0
+```
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -206,7 +249,7 @@ Upstream does not report playback completion or offer a TTS cancel acknowledgeme
 | CUDA out of memory | Select a GPU with more free memory, use one server process, and keep the default frame pixel budget. Stop only processes you own. |
 | Bridge stays on `collecting` | Verify topic names, sensor-data QoS, a continuous camera stream and about ten seconds of observations. Dropped frames are not padded by duplicating images. |
 | Live timestamps rejected | Synchronize the ROS host and GPU workstation clocks. Use Aria's host-time capture stamps; replay requests use relative timestamps. |
-| No speech recognized | Check the ASR model path, microphone sample rate, channel count and signal level; adjust `audio_gain` if your SDK's int32 scale differs. |
+| No speech recognized (empty transcript, `silence` status) | The clip was below the backend's 0.002 RMS silence cutoff. Aria Gen 2 speech needs about `audio_gain: 16.0`; see [Microphone level](#microphone-level). Also check the ASR model path and that `/aria/audio` is arriving. |
 | No instruction heard | Verify a manual `/aria/tts` message first; inspect `/planner/status` for stale results, speech guard or inference errors. |
 | HTTP 409 | A previous instruction needs feedback, an ID is being reused with changed input, or the task was cancelled. |
 | HTTP 429 | Another inference/ASR call is active. Wait and request a fresh observation. |

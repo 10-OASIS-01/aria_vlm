@@ -53,7 +53,7 @@
         <label for="goal">What should the person accomplish?</label><textarea id="goal" rows="3" required minlength="3" maxlength="1500" placeholder="For example: put the books in the tray and clear the work mat."></textarea>
         <label for="clip">Observation clip <small>At least 10 seconds; processed in your browser</small></label>
         <div class="upload-box"><span>↥</span><input id="clip" type="file" accept="video/*" required><p>The last 10 seconds become 20 timestamped frames.</p></div>
-        <div class="form-actions"><button class="button dark" type="submit" id="plan-button" disabled>Plan next step →</button><button class="text-button" type="button" id="cancel-button">Reset task</button></div>
+        <div class="form-actions"><button class="button dark" type="submit" id="plan-button" disabled>Plan next step →</button><button class="button light" type="button" id="confirm-button" hidden>Confirm complete</button><button class="text-button" type="button" id="cancel-button">Reset task</button></div>
         <p class="form-note">After acting, upload a new clip and submit again. Each submission confirms the previous step and plans from the updated view.</p>
         <p id="trial-status" role="status" class="form-status">Checking model availability…</p>
       </form>

@@ -39,7 +39,7 @@ class PlanRequest(StrictModel):
 
 
 class Feedback(StrictModel):
-    event: Literal["done", "next", "feedback", "cancel"]
+    event: Literal["done", "next", "feedback", "cancel", "confirm"]
     text: str = Field(default="", max_length=1500)
 
 

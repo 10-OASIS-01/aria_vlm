@@ -10,7 +10,10 @@ class Settings:
     model_path: str = field(default_factory=lambda: os.getenv("ARIA_MODEL_PATH", "Qwen/Qwen3.5-9B"))
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("ARIA_DATA_DIR", ".runtime")))
     device: str = field(default_factory=lambda: os.getenv("ARIA_DEVICE", "cuda:0"))
-    max_pixels: int = field(default_factory=lambda: int(os.getenv("ARIA_MAX_PIXELS", "131072")))
+    # Per frame; 307200 keeps the bridge's full 640x480 so small objects stay visible.
+    max_pixels: int = field(default_factory=lambda: int(os.getenv("ARIA_MAX_PIXELS", "307200")))
+    # "video": the 20 frames as one 2 fps clip; "images": 20 separate pictures (2x the tokens).
+    input_mode: str = field(default_factory=lambda: os.getenv("ARIA_INPUT_MODE", "video"))
     max_new_tokens: int = 96
     asr_model_path: str = field(default_factory=lambda: os.getenv("ARIA_ASR_MODEL_PATH", ""))
     api_token: str = field(default_factory=lambda: os.getenv("ARIA_API_TOKEN", ""))
@@ -20,4 +23,6 @@ class Settings:
     def __post_init__(self):
         if self.max_pixels < 65536 or self.max_pixels > 1048576:
             raise ValueError("ARIA_MAX_PIXELS must be between 65536 and 1048576")
+        if self.input_mode not in {"video", "images"}:
+            raise ValueError("ARIA_INPUT_MODE must be video or images")
         self.data_dir = self.data_dir.expanduser().resolve()

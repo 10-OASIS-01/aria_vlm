@@ -16,7 +16,15 @@ class GuidanceClient:
 
     def request(self, method, path, **kwargs):
         response = self.http.request(method, path, **kwargs)
-        response.raise_for_status()
+        if response.is_error:
+            # Keep the server's reason (e.g. stale frames) instead of a bare "422" status line.
+            try:
+                detail = response.json().get("detail", response.text)
+            except ValueError:
+                detail = response.text
+            raise httpx.HTTPStatusError(
+                f"{response.status_code}: {detail}", request=response.request, response=response
+            )
         return response.json()
 
     def create_session(self, goal, source="aria", task_id=""):

@@ -22,6 +22,10 @@ from aria_guidance.frames import FrameBuffer, WindowNotReady, encode_jpeg, ros_i
 
 LOGGER = logging.getLogger(__name__)
 
+# The model only proposes completion; the person closes the task by confirming.
+CONFIRM_HINT = " Say done to confirm, or next to continue."
+CONFIRM_WORDS = {"done", "yes", "confirm", "完成", "好了", "是"}
+
 
 class PlannerBridge(Node):
     def __init__(self):
@@ -32,6 +36,7 @@ class PlannerBridge(Node):
             "audio_topic": "/aria/audio",
             "tts_topic": "/aria/tts",
             "max_result_age_seconds": 60.0,
+            "request_timeout_seconds": 120.0,
             "image_interval_ms": 200.0,
             "max_audio_seconds": 20.0,
             "audio_gain": 1.0,
@@ -39,7 +44,9 @@ class PlannerBridge(Node):
         for name, default in defaults.items():
             self.declare_parameter(name, default)
         self.config = {name: self.get_parameter(name).value for name in defaults}
-        self.client = GuidanceClient(self.config["backend_url"])
+        self.client = GuidanceClient(
+            self.config["backend_url"], timeout=self.config["request_timeout_seconds"]
+        )
         self.frames = FrameBuffer()
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aria-http")
         self.lock = threading.RLock()
@@ -78,7 +85,8 @@ class PlannerBridge(Node):
     def on_image(self, message):
         stamp = message.header.stamp
         ts = stamp.sec * 1000 + stamp.nanosec / 1e6
-        if ts - self.last_image_ms < self.config["image_interval_ms"]:
+        # 10% slack: a 5 Hz camera jitters around 200 ms and would otherwise be thinned to ~3 Hz.
+        if ts - self.last_image_ms < 0.9 * self.config["image_interval_ms"]:
             return
         try:
             self.frames.add(ts, encode_jpeg(ros_image_to_pil(message)))
@@ -143,6 +151,8 @@ class PlannerBridge(Node):
                 self.status("idle", "No instruction to repeat")
         elif command.startswith("goal:"):
             self.on_goal(String(data=text[5:].strip()))
+        elif command in CONFIRM_WORDS and self.awaiting_confirmation():
+            self.confirm()
         elif command in {"next", "done", "完成", "下一步", "好了"}:
             self.trigger(text)
         elif text:
@@ -157,6 +167,32 @@ class PlannerBridge(Node):
         except Exception as e:
             LOGGER.exception("Remote cancellation failed")
             self.get_logger().warning(f"Remote cancellation failed: {e}")
+
+    def awaiting_confirmation(self):
+        with self.lock:
+            return bool(self.session) and self.session.get("state") == "done_proposed"
+
+    def confirm(self):
+        with self.lock:
+            if self.busy:
+                self.status("busy", "Wait for the request to finish")
+                return
+            self.busy = True
+            epoch, session = self.epoch, self.session
+        self.status("confirming", "Closing the task")
+        self.pool.submit(self.close_goal, epoch, session)
+
+    def close_goal(self, epoch, session):
+        try:
+            self.client.feedback(session["id"], "confirm")
+            self.messages.put(("confirmed", epoch, session))
+        except Exception as e:
+            LOGGER.exception("Completion confirmation failed")
+            self.messages.put(("error", epoch, str(e)))
+        finally:
+            with self.lock:
+                if epoch == self.epoch:
+                    self.busy = False
 
     def trigger(self, feedback="", initial=False):
         with self.lock:
@@ -211,13 +247,18 @@ class PlannerBridge(Node):
             )
             return
         text = result["instruction"]
-        self.tts_pub.publish(String(data=text))
+        if result["status"] == "done_proposed":
+            text += CONFIRM_HINT
+        self.publish_tts(text)
         self.published_ids.add(rid)
+        self.log_event(session_id, "tts_repeat" if repeat else "tts_published", rid, text)
+        self.status(result["status"], text)
+
+    def publish_tts(self, text):
+        self.tts_pub.publish(String(data=text))
         # Upstream provides no playback acknowledgement. This is only an estimate for PTT/echo.
         estimated = max(len(text.split()) / 2.3, len(text) / 12) + 1.0
         self.speaking_until = time.monotonic() + estimated
-        self.log_event(session_id, "tts_repeat" if repeat else "tts_published", rid, text)
-        self.status(result["status"], text)
 
     def log_event(self, sid, event, rid, detail, duration_ms=None):
         payload = {
@@ -328,6 +369,12 @@ class PlannerBridge(Node):
                     self.on_command(String(data=text))
                 else:
                     self.status("silence", "No speech recognized; record again")
+            elif kind == "confirmed":
+                if self.session and self.session["id"] == payload["id"]:
+                    self.session["state"] = "completed"
+                    self.publish_tts("Task complete.")
+                    self.log_event(payload["id"], "tts_published", None, "Task complete.")
+                    self.status("completed", "Goal confirmed; set a new goal to continue")
             elif kind == "plan":
                 self.busy = False
                 session, result = payload

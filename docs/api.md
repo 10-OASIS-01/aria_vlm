@@ -37,7 +37,7 @@ client.close()
 | POST | `/api/sessions` | `{goal, source, task_id?}` → new session |
 | GET | `/api/sessions/{id}` | Goal, state, history, plans and client events |
 | POST | `/api/sessions/{id}/plan` | `{request_id, frames}` → next instruction |
-| POST | `/api/sessions/{id}/feedback` | `{event, text?}`; event is `done`, `next`, `feedback` or `cancel` |
+| POST | `/api/sessions/{id}/feedback` | `{event, text?}`; event is `done`, `next`, `feedback`, `cancel` or `confirm` |
 | POST | `/api/sessions/{id}/events` | Bridge timestamps, TTS publish/suppression and client timing |
 | POST | `/api/transcribe` | Multipart `file`, 16-bit PCM WAV, 0.2–30 seconds, ≤6 MiB |
 | GET | `/api/runs/{request_id}/frames/{index}` | Saved frame index 0–19 |
@@ -55,11 +55,13 @@ Write requests require `Authorization: Bearer TOKEN` only when `ARIA_API_TOKEN` 
 - For `source="aria"` or `"webcam"`, timestamps are Unix epoch milliseconds; the newest capture must be no more than five seconds old or three seconds into the future when received.
 - For `source="replay"`, timestamps may be relative to the recording. Replay mode is identified in the session and must not be counted as live hardware evidence.
 
-The ROS bridge samples a bounded buffer. It requires a sufficiently complete window and rejects stale, duplicated or badly gapped captures. Images are JPEG encoded at a maximum edge of 640 pixels before transmission; Qwen's processor applies the configured pixel budget.
+The ROS bridge samples a bounded buffer. It requires a sufficiently complete window and rejects stale, duplicated or badly gapped captures. Images are JPEG encoded at a maximum edge of 640 pixels before transmission; Qwen's processor applies the configured pixel budget. With `ARIA_INPUT_MODE=video` (the default), the backend passes the 20 frames to the model as one 2 fps video. The `<t seconds>` timestamps the processor inserts come from that nominal rate, not from the client's capture times; the gap limits above keep the actual spacing close to it.
 
 ## Session lifecycle
 
-`ready → planning → awaiting_feedback → ready`, or `planning → completed`.
+`ready → planning → awaiting_feedback → ready`, or `planning → awaiting_confirmation → completed`.
+
+The model only proposes completion. A `DONE` answer moves the session to `awaiting_confirmation`, and the `confirm` feedback event closes it as `completed`. Any other feedback event in that state (for example `next`, or `feedback` saying something is still missing) returns the session to `ready` for another plan, with the exchange kept in the dialogue history. `confirm` in any other state is rejected with 409.
 
 `cancel` moves the session to `cancelled` and invalidates a generation in flight. A new goal creates a new session. Restarting the service marks interrupted plans as failed and returns affected sessions to `ready`.
 
@@ -70,7 +72,7 @@ Each plan uses a UUID `request_id`. Retrying the same ID with identical input re
 Output includes:
 
 - `instruction`: text intended for the person.
-- `status`: `instruction`, `clarification` or `completed`. Only the exact model control response `DONE` marks completion; arbitrary sentences mentioning completion do not.
+- `status`: `instruction`, `clarification` or `done_proposed`. Only the exact model control response `DONE` proposes completion; arbitrary sentences mentioning completion do not. A `done_proposed` result carries the instruction "The task looks complete." and needs a `confirm` feedback event before the session is `completed`.
 - `raw_output`: the non-thinking model answer, retained for evaluation.
 - `input_tokens`, `output_tokens`, observation stamps and timing fields.
 - `preview`: a relative URL for the newest saved frame, or null when frame saving is disabled.

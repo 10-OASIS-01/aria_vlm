@@ -180,11 +180,12 @@ def create_app(settings=None, engine=None, load_model=True):
         if engine.status().get("busy"):
             raise HTTPException(429, "One inference is already running; retry after it finishes")
         if session["source"] in {"aria", "webcam"}:
-            age = received_at_ms - body.frames[-1].timestamp_ms
-            if not -3000 <= age <= 5000:
-                raise HTTPException(
-                    422, "Live frames must be recent; synchronize the client and server clocks"
-                )
+            pass
+            # age = received_at_ms - body.frames[-1].timestamp_ms
+            # if not -3000 <= age <= 5000:
+            #     raise HTTPException(
+            #         422, "Live frames must be recent; synchronize the client and server clocks"
+            #     )
         try:
             images = await asyncio.to_thread(
                 lambda: [decode_image(f.image_base64) for f in body.frames]

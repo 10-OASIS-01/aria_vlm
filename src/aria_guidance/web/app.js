@@ -73,7 +73,7 @@ async function sampleClip(file, epoch) {
 $("#trial-form").onsubmit=async(e)=>{
   e.preventDefault(); if(state.busy) return;
   const file=$("#clip").files[0],goal=$("#goal").value.trim(); if(!file||goal.length<3)return;
-  const epoch=state.epoch;state.busy=true;$("#plan-button").disabled=true;$("#trial-status").classList.remove("error-text");
+  const epoch=state.epoch;state.busy=true;$("#plan-button").disabled=true;$("#confirm-button").hidden=true;$("#trial-status").classList.remove("error-text");
   try {
     const frames=await sampleClip(file,epoch);
     let current=state.session;
@@ -90,16 +90,19 @@ $("#trial-form").onsubmit=async(e)=>{
     const started=performance.now();
     const result=await api(`api/sessions/${current.id}/plan`,{method:"POST",body:JSON.stringify({request_id:crypto.randomUUID?crypto.randomUUID():uuidFallback(),frames})});
     if(epoch!==state.epoch) return;
-    $("#instruction-text").textContent=result.instruction;$("#instruction-state").textContent=result.status==="completed"?"Task complete":"Your next step";
+    const proposed=result.status==="done_proposed";
+    $("#instruction-text").textContent=result.instruction;$("#instruction-state").textContent=proposed?"Looks complete":result.status==="clarification"?"Qwen needs clarification":"Your next step";
     $("#instruction-meta").textContent=`20 frames · Model ${seconds(result.timings.model_ms)} · HTTP ${seconds(performance.now()-started)}`;
-    $("#trial-status").textContent=result.status==="completed"?"Goal complete. Reset to start another task.":"Act on this instruction, then upload a new clip.";
-    if(result.status==="completed") state.session=null;
+    // Qwen only proposes completion; the person confirms, or uploads a new clip to continue.
+    $("#trial-status").textContent=proposed?"Qwen thinks the goal is complete. Confirm, or upload a new clip to continue.":"Act on this instruction, then upload a new clip.";
+    $("#confirm-button").hidden=!proposed;
     $("#clip").value="";
   } catch(err){if(epoch===state.epoch){$("#trial-status").textContent=err.message;$("#trial-status").classList.add("error-text");$("#instruction-state").textContent="Needs attention";}}
   finally {state.busy=false;$("#plan-button").disabled=state.status?.model.state!=="ready";}
 };
 function uuidFallback(){const a=crypto.getRandomValues(new Uint8Array(16));a[6]=(a[6]&15)|64;a[8]=(a[8]&63)|128;const s=Array.from(a,x=>x.toString(16).padStart(2,"0")).join("");return `${s.slice(0,8)}-${s.slice(8,12)}-${s.slice(12,16)}-${s.slice(16,20)}-${s.slice(20)}`;}
-$("#cancel-button").onclick=async()=>{state.epoch++;const old=state.session;state.session=null;$("#trial-status").textContent="Task reset. Start with a new goal and clip.";$("#instruction-text").textContent="Ready for a new task.";$("#instruction-state").textContent="Waiting for a clip";$("#clip-preview").hidden=true;$("#clip").value="";if(old){try{await api(`api/sessions/${old.id}/feedback`,{method:"POST",body:JSON.stringify({event:"cancel"})});}catch(err){toast(err.message);}}};
+$("#confirm-button").onclick=async()=>{const current=state.session;if(!current||state.busy)return;state.busy=true;try{await api(`api/sessions/${current.id}/feedback`,{method:"POST",body:JSON.stringify({event:"confirm"})});state.session=null;$("#confirm-button").hidden=true;$("#instruction-state").textContent="Task complete";$("#trial-status").textContent="Goal complete. Reset to start another task.";}catch(err){toast(err.message);}finally{state.busy=false;}};
+$("#cancel-button").onclick=async()=>{state.epoch++;const old=state.session;state.session=null;$("#confirm-button").hidden=true;$("#trial-status").textContent="Task reset. Start with a new goal and clip.";$("#instruction-text").textContent="Ready for a new task.";$("#instruction-state").textContent="Waiting for a clip";$("#clip-preview").hidden=true;$("#clip").value="";if(old){try{await api(`api/sessions/${old.id}/feedback`,{method:"POST",body:JSON.stringify({event:"cancel"})});}catch(err){toast(err.message);}}};
 const observer=new IntersectionObserver(entries=>{for(const e of entries)if(e.isIntersecting){document.querySelectorAll(".sidebar nav a").forEach(a=>a.classList.toggle("active",a.hash===`#${e.target.id}`));}},{rootMargin:"-15% 0px -60% 0px"});
 document.querySelectorAll("main section").forEach(s=>observer.observe(s));
 refreshStatus();setInterval(refreshStatus,5000);

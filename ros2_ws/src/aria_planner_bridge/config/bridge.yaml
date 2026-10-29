@@ -5,6 +5,7 @@ planner_bridge:
     audio_topic: /aria/audio
     tts_topic: /aria/tts
     max_result_age_seconds: 60.0
+    request_timeout_seconds: 120.0
     image_interval_ms: 200.0
     max_audio_seconds: 20.0
     audio_gain: 1.0
