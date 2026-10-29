@@ -1,6 +1,6 @@
 """Debug-only live meter for /aria/audio: level vs the backend's 0.002 silence cutoff, plus block rate.
 
-The level uses the bridge's own pcm32_to_mono, so the gain parameter previews the bridge's audio_gain.
+The level uses guidance_node's own pcm32_to_mono, so the gain parameter previews its audio_gain.
 """
 
 import time

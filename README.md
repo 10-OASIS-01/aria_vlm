@@ -26,7 +26,18 @@ The existing Aria node **publishes three topics and subscribes to one**. Those a
 | `/aria/audio` | Publishes microphone audio | `aria_msgs/msg/Audio` | Interleaved signed int32 samples |
 | `/aria/tts` | Subscribes to text | `std_msgs/msg/String` | One utterance per instruction |
 
-The bridge does not require additional services or modifications to the Aria node. `/planner/goal`, `/planner/command`, `/planner/status`, `/planner/transcript` and `/planner/listen` belong to **this new bridge**, not to the existing infrastructure. They provide local controls and diagnostics. Topic names for vision, audio and TTS are configurable.
+`guidance_node` requires no changes to the Aria node. It owns the task (goal, dialogue history, step state) and calls the backend's stateless `POST /v1/plan`, so a backend restart loses nothing. Its own interface, all standard message types:
+
+| Interface | Type | Use |
+| --- | --- | --- |
+| `/guidance/goal` | `std_msgs/msg/String` | Sets a new goal |
+| `/guidance/reply` | `std_msgs/msg/String` | `done`, `next`, `repeat`, `cancel` or free-text feedback |
+| `/guidance/note` | `std_msgs/msg/String` | Operator note for the trial record |
+| `/guidance/talk` | `std_srvs/srv/SetBool` | Push-to-talk: `true` starts recording, `false` transcribes |
+| `/guidance/state` | `std_msgs/msg/String` | JSON `{state, detail, task, goal, instruction}`; transient-local |
+| `/guidance/transcript` | `std_msgs/msg/String` | What the recognizer heard |
+
+Topic names for vision, audio and TTS are configurable.
 
 The protocol is user-paced: set a goal → collect observations → receive one instruction → act → say or send `done` / `next` → observe again. Cancelling or replacing a goal invalidates pending model output.
 
@@ -174,41 +185,41 @@ For a backend behind a prefix, pass the complete base URL, for example `backend_
 
 ## 4. Run a task through the glasses
 
-In a sourced ROS terminal, inspect the bridge:
+In a sourced ROS terminal, watch the node:
 
 ```bash
-ros2 topic echo /planner/status
+ros2 topic echo /guidance/state
 ```
 
 In a second terminal, give a goal:
 
 ```bash
-ros2 topic pub --once /planner/goal std_msgs/msg/String "{data: 'Put each colored cube into the tray of the same color.'}"
+ros2 topic pub --once /guidance/goal std_msgs/msg/String "{data: 'Put each colored cube into the tray of the same color.'}"
 ```
 
-Keep the work area visible. Once a complete camera window is available, the bridge sends twenty distinct frames and publishes the returned instruction to `/aria/tts`. Perform the action and request the next step:
+Keep the work area visible. Once a complete camera window is available, the node sends twenty distinct frames and publishes the returned instruction to `/aria/tts`. Perform the action and request the next step:
 
 ```bash
-ros2 topic pub --once /planner/command std_msgs/msg/String "{data: 'done'}"
+ros2 topic pub --once /guidance/reply std_msgs/msg/String "{data: 'done'}"
 # Other controls:
-ros2 topic pub --once /planner/command std_msgs/msg/String "{data: 'repeat'}"
-ros2 topic pub --once /planner/command std_msgs/msg/String "{data: 'cancel'}"
+ros2 topic pub --once /guidance/reply std_msgs/msg/String "{data: 'repeat'}"
+ros2 topic pub --once /guidance/reply std_msgs/msg/String "{data: 'cancel'}"
 ```
 
-To supply a goal or feedback by microphone, use the bridge's push-to-talk service:
+To supply a goal or feedback by microphone, use push-to-talk. `tools/ptt.py` gives a hold-Space window; the bare service calls are:
 
 ```bash
-ros2 service call /planner/listen std_srvs/srv/SetBool "{data: true}"
+ros2 service call /guidance/talk std_srvs/srv/SetBool "{data: true}"
 # Speak a goal, 'done', 'next', 'repeat', 'cancel', or a correction.
-ros2 service call /planner/listen std_srvs/srv/SetBool "{data: false}"
-ros2 topic echo /planner/transcript
+ros2 service call /guidance/talk std_srvs/srv/SetBool "{data: false}"
+ros2 topic echo /guidance/transcript
 ```
 
-The bridge buffers the existing `/aria/audio` blocks, downmixes channels, converts signed int32 PCM to WAV, and calls local ASR. With no active task, recognized speech becomes the goal. During a task, `done`/`next` requests a new step; other speech becomes feedback. Say `goal: ...` or publish a new `/planner/goal` to replace a task explicitly. Recording is limited to 20 seconds. It is push-to-talk by design. Recording cannot begin while planning or estimated playback is active, and planning pauses while recording or transcription is active.
+The node buffers the existing `/aria/audio` blocks, downmixes channels, converts signed int32 PCM to WAV, and calls local ASR. With no active task, recognized speech becomes the goal. During a task, `done`/`next` requests a new step; other speech becomes feedback. Say `goal: ...` or publish a new `/guidance/goal` to replace a task explicitly. Recording is limited to 20 seconds. It is push-to-talk by design. Recording cannot begin while planning or estimated playback is active, and planning pauses while recording or transcription is active.
 
-Upstream does not report playback completion or offer a TTS cancel acknowledgement. The bridge sends one instruction per user request, deduplicates request IDs, and uses an estimated speaking interval to guard repeats and recording. Cancelling suppresses **unsent** planner output; it cannot retract speech already handed to the glasses.
+Upstream does not report playback completion or offer a TTS cancel acknowledgement. The node sends one instruction per user request and uses an estimated speaking interval to guard repeats and recording. Cancelling suppresses **unsent** planner output; it cannot retract speech already handed to the glasses.
 
-### Speaking to the planner
+### Speaking to the node
 
 Start recording, speak normally, then stop recording. No wake word or special phrasing is needed. What happens to the transcript depends on whether a task is active and on the exact words:
 
@@ -221,20 +232,21 @@ Start recording, speak normally, then stop recording. No wake word or special ph
 | `repeat` | Task active | Speaks the last instruction again |
 | `cancel` or `stop` | Any time | Ends the task |
 | `goal: ...` | Task active | Replaces the goal |
+| `note: ...` | Any time | Saved as a note in the trial record |
 | Anything else, e.g. "I can't find it" | Task active | Sent as feedback, then a new step is planned |
 
 - A command must be the whole recording. Case and trailing punctuation are ignored (`Next.` works), but "next step please" counts as feedback. It still triggers a new step, with the words attached.
 - To change the goal by voice, say `cancel`, then the new goal as a separate recording. `goal: ...` only matches when the recognizer writes the colon; it may produce "Goal, ..." instead.
 - Wait about ten seconds after the camera starts before giving the first goal, so a complete observation window exists.
-- `/planner/listen` refuses to start while planning, transcription or the estimated playback of the previous instruction is active. Retry once it finishes.
+- `/guidance/talk` refuses to start while planning, transcription or the estimated playback of the previous instruction is active. Retry once it finishes.
 - `ros2 service call` takes a second or two to start. Begin speaking only after the start call returns, or the first words are lost.
-- `/planner/transcript` shows exactly what was recognized. Check it first when a command has no effect.
+- `/guidance/transcript` shows exactly what was recognized. Check it first when a command has no effect.
 
 #### Microphone level
 
-On the Aria Gen 2 glasses tested here, `/aria/audio` carries 8 channels at 16 kHz, with 16-bit samples in the upper half of each int32. After the bridge mixes the channels down, room noise measured about 0.0002 RMS of full scale and normal speech about 0.0006. The backend treats a clip below 0.002 RMS as silence and returns an empty transcript without running ASR. At `audio_gain: 1.0` every recording therefore comes back empty, so the bridge defaults to `audio_gain: 16.0`.
+On the Aria Gen 2 glasses tested here, `/aria/audio` carries 8 channels at 16 kHz, with 16-bit samples in the upper half of each int32. After the node mixes the channels down, room noise measured about 0.0002 RMS of full scale and normal speech about 0.0006. The backend treats a clip below 0.002 RMS as silence and returns an empty transcript without running ASR. At `audio_gain: 1.0` every recording therefore comes back empty, so the node defaults to `audio_gain: 16.0`.
 
-Adjust `audio_gain` in [guidance.yaml](ros2_ws/src/aria_guidance_ros/config/guidance.yaml), or in a copy passed with `config:=...`, if a different microphone or room needs it. The bridge reads the value only at startup, so restart it and confirm:
+Adjust `audio_gain` in [guidance.yaml](ros2_ws/src/aria_guidance_ros/config/guidance.yaml), or in a copy passed with `config:=...`, if a different microphone or room needs it. The node reads the value only at startup, so restart it and confirm:
 
 ```bash
 ros2 param get /guidance_node audio_gain   # Double value is: 16.0
@@ -268,7 +280,7 @@ python -m pytest "$GUIDANCE_REPO/tests/integration"
 | Bridge stays on `collecting` | Verify topic names, sensor-data QoS, a continuous camera stream and about ten seconds of observations. Dropped frames are not padded by duplicating images. |
 | Live timestamps rejected (422, "Newest frame is N s old") | Synchronize the ROS host and GPU workstation clocks. Use Aria's host-time capture stamps; replay requests use relative timestamps. Ages of several seconds on one machine mean the camera stream is backlogged (for example with the Aria viewer running). `ARIA_MAX_FRAME_AGE_MS` sets the limit (default 5000); `0` disables the check. |
 | No speech recognized (empty transcript, `silence` status) | The clip was below the backend's 0.002 RMS silence cutoff. Aria Gen 2 speech needs about `audio_gain: 16.0`; see [Microphone level](#microphone-level). Also check the ASR model path and that `/aria/audio` is arriving. |
-| No instruction heard | Verify a manual `/aria/tts` message first; inspect `/planner/status` for stale results, speech guard or inference errors. |
+| No instruction heard | Verify a manual `/aria/tts` message first; inspect `/guidance/state` for stale results, speech guard or inference errors. |
 | HTTP 409 | A previous instruction needs feedback, an ID is being reused with changed input, or the task was cancelled. |
 | HTTP 429 | Another inference/ASR call is active. Wait and request a fresh observation. |
 | Assets fail behind `/aria/` | Ensure the proxy strips `/aria/`, preserves the trailing-slash redirect, and the backend has `ARIA_ROOT_PATH=/aria`. |

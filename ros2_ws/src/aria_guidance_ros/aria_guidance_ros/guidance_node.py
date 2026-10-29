@@ -1,9 +1,12 @@
-"""User-paced Aria bridge. All network/model work stays off the ROS callback thread."""
+"""Guidance node: owns the task, calls the stateless backend. Network work stays off ROS callbacks.
+
+The task (aria_guidance.task) is only touched from ROS callbacks, which run one at a time; pool
+threads do HTTP and hand results back through `messages`, drained by `tick`.
+"""
 
 import json
 import logging
 import queue
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -11,7 +14,7 @@ import numpy as np
 import rclpy
 from aria_msgs.msg import Audio
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
@@ -19,12 +22,14 @@ from std_srvs.srv import SetBool
 from aria_guidance.audio import mono_to_wav, pcm32_to_mono
 from aria_guidance.client import GuidanceClient
 from aria_guidance.frames import FrameBuffer, WindowNotReady, encode_jpeg, ros_image_to_pil
+from aria_guidance.task import Task, parse_reply
 
 LOGGER = logging.getLogger(__name__)
 
 # The model only proposes completion; the person closes the task by confirming.
 CONFIRM_HINT = " Say done to confirm, or next to continue."
-CONFIRM_WORDS = {"done", "yes", "confirm", "完成", "好了", "是"}
+# Late joiners (Foxglove, ptt.py) get the current state at once.
+LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
 
 class GuidanceNode(Node):
@@ -49,14 +54,9 @@ class GuidanceNode(Node):
         )
         self.frames = FrameBuffer()
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aria-http")
-        self.lock = threading.RLock()
         self.messages = queue.SimpleQueue()
-        self.epoch = 0
-        self.session = None
-        self.busy = False
-        self.need_initial_plan = False
-        self.last_instruction = None
-        self.published_ids = set()
+        self.task = Task()
+        self.planning = False  # A plan request is in flight, possibly for an older epoch.
         self.last_image_ms = -1.0
         self.speaking_until = 0.0
         self.audio_active = False
@@ -65,22 +65,34 @@ class GuidanceNode(Node):
         self.audio_started = 0.0
         self.audio_busy = False
         self.last_wait_log = 0.0
-        self.status_pub = self.create_publisher(String, "/planner/status", 10)
-        self.transcript_pub = self.create_publisher(String, "/planner/transcript", 10)
+        self.state_pub = self.create_publisher(String, "/guidance/state", LATCHED)
+        self.transcript_pub = self.create_publisher(String, "/guidance/transcript", 10)
         self.tts_pub = self.create_publisher(String, self.config["tts_topic"], 10)
         self.create_subscription(
             Image, self.config["image_topic"], self.on_image, qos_profile_sensor_data
         )
         self.create_subscription(Audio, self.config["audio_topic"], self.on_audio, 100)
-        self.create_subscription(String, "/planner/goal", self.on_goal, 10)
-        self.create_subscription(String, "/planner/command", self.on_command, 10)
-        self.create_service(SetBool, "/planner/listen", self.on_listen)
+        self.create_subscription(String, "/guidance/goal", lambda m: self.start(m.data), 10)
+        self.create_subscription(String, "/guidance/reply", lambda m: self.reply(m.data), 10)
+        self.create_subscription(String, "/guidance/note", lambda m: self.note(m.data), 10)
+        self.create_service(SetBool, "/guidance/talk", self.on_talk)
         self.create_timer(0.2, self.tick)
-        self.status("ready", "Publish a goal to /planner/goal or record one with /planner/listen")
+        self.status("idle", "Publish a goal to /guidance/goal or say one with /guidance/talk")
 
     def status(self, state, detail):
-        self.status_pub.publish(String(data=json.dumps({"state": state, "detail": detail})))
+        last = self.task.last
+        body = {
+            "state": state,
+            "detail": detail,
+            "task": self.task.state,
+            "goal": self.task.goal,
+            "instruction": last["instruction"] if last else None,
+        }
+        self.state_pub.publish(String(data=json.dumps(body, ensure_ascii=False)))
         self.get_logger().info(f"{state}: {detail}")
+
+    def record(self, kind, **fields):
+        self.get_logger().debug(f"{kind}: {fields}")
 
     def on_image(self, message):
         stamp = message.header.stamp
@@ -94,168 +106,99 @@ class GuidanceNode(Node):
         except ValueError as e:
             self.status("image_error", str(e))
 
-    def on_goal(self, message):
-        goal = message.data.strip()
+    def start(self, goal):
+        goal = goal.strip()
         if not 3 <= len(goal) <= 1500:
             self.status("invalid_goal", "Goal must contain 3–1500 characters")
             return
-        with self.lock:
-            old = self.session
-            self.epoch += 1
-            epoch = self.epoch
-            self.session, self.last_instruction = None, None
-            self.busy, self.need_initial_plan = True, False
-            self.audio_active, self.audio_chunks = False, []
-        self.status("creating_task", goal)
-        self.pool.submit(self.begin_goal, epoch, goal, old)
+        self.task.start(goal)
+        self.audio_active, self.audio_chunks = False, []
+        self.record("goal", text=goal)
+        self.status("ready", goal)
 
-    def begin_goal(self, epoch, goal, old):
-        try:
-            if old:
-                self.client.feedback(old["id"], "cancel")
-            session = self.client.create_session(goal)
-            with self.lock:
-                current = epoch == self.epoch
-                if current:
-                    self.session = session
-                    self.need_initial_plan = True
-            if not current:
-                self.client.feedback(session["id"], "cancel")
-        except Exception as e:
-            LOGGER.exception("Could not create guidance session")
-            self.messages.put(("error", epoch, str(e)))
-        finally:
-            with self.lock:
-                if epoch == self.epoch:
-                    self.busy = False
-
-    def on_command(self, message):
-        text = message.data.strip()
-        command = text.lower().rstrip(".!?。！？")
-        if command in {"cancel", "stop", "停止", "取消"}:
-            with self.lock:
-                old = self.session
-                self.epoch += 1
-                self.session, self.last_instruction = None, None
-                self.busy, self.need_initial_plan = False, False
-                self.audio_active, self.audio_chunks = False, []
-            if old:
-                self.pool.submit(self.cancel_remote, old["id"])
-            self.status("cancelled", "Pending planner output is invalidated")
-        elif command in {"repeat", "重复", "再说一遍"}:
-            with self.lock:
-                last, session = self.last_instruction, self.session
-            if last and session:
-                self.speak(session["id"], last, repeat=True)
-            else:
-                self.status("idle", "No instruction to repeat")
-        elif command.startswith("goal:"):
-            self.on_goal(String(data=text[5:].strip()))
-        elif command in CONFIRM_WORDS and self.awaiting_confirmation():
+    def reply(self, text):
+        command, text = parse_reply(text, self.task)
+        if command == "goal":
+            self.start(text)
+        elif command == "note":
+            self.note(text)
+        elif command == "cancel":
+            self.cancel()
+        elif command == "repeat":
+            self.repeat()
+        elif command == "confirm":
             self.confirm()
-        elif command in {"next", "done", "完成", "下一步", "好了"}:
-            self.trigger(text)
-        elif text:
-            if not self.session:
-                self.on_goal(String(data=text))
+        elif command == "feedback":
+            if self.task.feedback(text):
+                self.record("reply", text=text)
+                self.status("ready", text)
             else:
-                self.trigger(text)
+                self.status("busy", "Wait for the current plan to finish")
+        else:
+            self.status("idle", "Set a goal first")
 
-    def cancel_remote(self, session_id):
-        try:
-            self.client.feedback(session_id, "cancel")
-        except Exception as e:
-            LOGGER.exception("Remote cancellation failed")
-            self.get_logger().warning(f"Remote cancellation failed: {e}")
+    def note(self, text):
+        if text.strip():
+            self.record("note", text=text.strip())
 
-    def awaiting_confirmation(self):
-        with self.lock:
-            return bool(self.session) and self.session.get("state") == "done_proposed"
+    def cancel(self):
+        if not self.task.active:
+            self.status("idle", "No task to cancel")
+            return
+        self.task.cancel()
+        self.audio_active, self.audio_chunks = False, []
+        self.record("reply", text="cancel")
+        self.status("cancelled", "Pending planner output is invalidated")
+
+    def repeat(self):
+        if self.task.last and self.task.active:
+            self.speak(self.task.last, repeat=True)
+        else:
+            self.status("idle", "No instruction to repeat")
 
     def confirm(self):
-        with self.lock:
-            if self.busy:
-                self.status("busy", "Wait for the request to finish")
-                return
-            self.busy = True
-            epoch, session = self.epoch, self.session
-        self.status("confirming", "Closing the task")
-        self.pool.submit(self.close_goal, epoch, session)
+        if self.task.confirm():
+            self.record("reply", text="confirm")
+            self.publish_tts("Task complete.")
+            self.status("completed", "Goal confirmed; set a new goal to continue")
 
-    def close_goal(self, epoch, session):
+    def plan_if_ready(self):
+        """Starts a plan when the task wants one, nothing else is running and frames are fresh."""
+        if self.task.state != "ready" or self.planning or self.audio_active or self.audio_busy:
+            return
         try:
-            self.client.feedback(session["id"], "confirm")
-            self.messages.put(("confirmed", epoch, session))
-        except Exception as e:
-            LOGGER.exception("Completion confirmation failed")
-            self.messages.put(("error", epoch, str(e)))
-        finally:
-            with self.lock:
-                if epoch == self.epoch:
-                    self.busy = False
-
-    def trigger(self, feedback="", initial=False):
-        with self.lock:
-            if self.audio_active or self.audio_busy:
-                if not initial:
-                    self.status("recording", "Finish recording and transcription before planning")
-                return
-            if self.busy or not self.session:
-                if not initial:
-                    self.status(
-                        "busy" if self.busy else "idle", "Wait for the request or set a goal first"
-                    )
-                return
-            if self.session.get("state") == "completed":
-                self.status("completed", "Goal is complete; set a new goal to continue")
-                return
-            try:
-                frames = self.frames.sample(now_ms=time.time() * 1000)
-            except WindowNotReady as e:
-                if time.monotonic() - self.last_wait_log > 2:
-                    self.status("collecting", str(e))
-                    self.last_wait_log = time.monotonic()
-                return
-            self.busy, self.need_initial_plan = True, False
-            epoch, session = self.epoch, self.session
+            frames = self.frames.sample(now_ms=time.time() * 1000)
+        except WindowNotReady as e:
+            if time.monotonic() - self.last_wait_log > 2:
+                self.status("collecting", str(e))
+                self.last_wait_log = time.monotonic()
+            return
+        epoch, goal, history = self.task.begin_plan()
+        self.planning = True
+        self.record("plan_request", frames=[f.timestamp_ms for f in frames])
         self.status("planning", "Sending 20 frames to Qwen")
-        self.pool.submit(self.plan, epoch, session, frames, feedback, initial)
+        self.pool.submit(self.plan, epoch, goal, history, frames)
 
-    def plan(self, epoch, session, frames, feedback, initial):
+    def plan(self, epoch, goal, history, frames):
         started = time.monotonic()
         try:
-            if not initial:
-                self.client.feedback(session["id"], "feedback", feedback or "Next step, please.")
-            with self.lock:
-                if epoch != self.epoch:
-                    return
-                # The backend is now ready, even if this plan fails: a pending completion
-                # proposal was rejected, so a later "done" must not send confirm (409).
-                if not initial:
-                    session["state"] = "ready"
-            result = self.client.plan(session["id"], [f.payload() for f in frames])
+            result = self.client.plan_v1(goal, history, [f.payload() for f in frames])
             result["client_roundtrip_ms"] = (time.monotonic() - started) * 1000
-            self.messages.put(("plan", epoch, (session, result)))
+            self.messages.put(("plan", epoch, result))
         except Exception as e:
             LOGGER.exception("Planning request failed")
             self.messages.put(("plan_error", epoch, str(e)))
 
-    def speak(self, session_id, result, repeat=False):
-        rid = result["request_id"]
-        if not repeat and rid in self.published_ids:
-            return
+    def speak(self, result, repeat=False):
         if time.monotonic() < self.speaking_until:
             self.status("speech_guard", "Wait for the previous utterance, then send repeat")
-            self.log_event(
-                session_id, "tts_suppressed", rid, "Estimated previous speech is still active"
-            )
+            self.record("tts_suppressed", text=result["instruction"])
             return
         text = result["instruction"]
         if result["status"] == "done_proposed":
             text += CONFIRM_HINT
         self.publish_tts(text)
-        self.published_ids.add(rid)
-        self.log_event(session_id, "tts_repeat" if repeat else "tts_published", rid, text)
+        self.record("tts", text=text, repeat=repeat)
         self.status(result["status"], text)
 
     def publish_tts(self, text):
@@ -264,31 +207,12 @@ class GuidanceNode(Node):
         estimated = max(len(text.split()) / 2.3, len(text) / 12) + 1.0
         self.speaking_until = time.monotonic() + estimated
 
-    def log_event(self, sid, event, rid, detail, duration_ms=None):
-        payload = {
-            "event": event,
-            "request_id": rid,
-            "timestamp_ms": time.time() * 1000,
-            "detail": detail,
-        }
-        if duration_ms is not None:
-            payload["duration_ms"] = duration_ms
-
-        def save():
-            try:
-                self.client.event(sid, **payload)
-            except Exception as e:
-                LOGGER.exception("Client event could not be saved")
-                self.get_logger().warning(f"Event log failed: {e}")
-
-        self.pool.submit(save)
-
-    def on_listen(self, request, response):
+    def on_talk(self, request, response):
         if request.data:
             if (
                 self.audio_active
                 or self.audio_busy
-                or self.busy
+                or self.planning
                 or time.monotonic() < self.speaking_until
             ):
                 response.success, response.message = (
@@ -337,7 +261,7 @@ class GuidanceNode(Node):
         samples = np.concatenate(self.audio_chunks)
         self.audio_chunks = []
         wav = mono_to_wav(samples, self.audio_rate)
-        epoch = self.epoch
+        epoch = self.task.epoch
         self.audio_busy = True
 
         def transcribe():
@@ -356,57 +280,34 @@ class GuidanceNode(Node):
     def tick(self):
         while not self.messages.empty():
             kind, epoch, payload = self.messages.get()
-            if epoch != self.epoch:
+            if kind in {"plan", "plan_error"}:
+                self.planning = False
+            if epoch != self.task.epoch:
                 continue
-            if kind in {"error", "plan_error"}:
-                if kind == "plan_error":
-                    self.busy = False
+            if kind == "plan":
+                if payload["client_roundtrip_ms"] > self.config["max_result_age_seconds"] * 1000:
+                    self.task.fail_plan(epoch)
+                    self.record("tts_suppressed", text=payload["instruction"], reason="stale")
+                    self.status("stale", "Result took too long; say next for a fresh observation")
+                elif self.task.finish_plan(epoch, payload):
+                    self.record("plan_result", **payload)
+                    self.speak(payload)
+            elif kind == "plan_error":
+                self.task.fail_plan(epoch)
+                self.record("error", text=payload)
+                self.status("error", payload)
+            elif kind == "error":
+                self.record("error", text=payload)
                 self.status("error", payload)
             elif kind == "transcript":
                 text = payload["text"]
                 self.transcript_pub.publish(String(data=text))
-                if self.session:
-                    self.log_event(
-                        self.session["id"], "transcript", None, text, payload.get("duration_ms")
-                    )
+                self.record("transcript", text=text, duration_ms=payload.get("duration_ms"))
                 if text:
-                    self.on_command(String(data=text))
+                    self.reply(text)
                 else:
                     self.status("silence", "No speech recognized; record again")
-            elif kind == "confirmed":
-                if self.session and self.session["id"] == payload["id"]:
-                    self.session["state"] = "completed"
-                    self.publish_tts("Task complete.")
-                    self.log_event(payload["id"], "tts_published", None, "Task complete.")
-                    self.status("completed", "Goal confirmed; set a new goal to continue")
-            elif kind == "plan":
-                self.busy = False
-                session, result = payload
-                if not self.session or self.session["id"] != session["id"]:
-                    continue
-                duration = result["client_roundtrip_ms"]
-                self.log_event(
-                    session["id"],
-                    "client_timing",
-                    result["request_id"],
-                    "Request to model response",
-                    duration,
-                )
-                if duration > self.config["max_result_age_seconds"] * 1000:
-                    self.last_instruction = None
-                    self.status("stale", "Result took too long; request a fresh observation")
-                    self.log_event(
-                        session["id"],
-                        "tts_suppressed",
-                        result["request_id"],
-                        "Result exceeded maximum age",
-                    )
-                else:
-                    self.last_instruction = result
-                    self.session["state"] = result["status"]
-                    self.speak(session["id"], result)
-        if self.need_initial_plan:
-            self.trigger(initial=True)
+        self.plan_if_ready()
         if (
             self.audio_active
             and time.monotonic() - self.audio_started > self.config["max_audio_seconds"]
@@ -414,11 +315,7 @@ class GuidanceNode(Node):
             self.finish_audio()
 
     def close(self):
-        with self.lock:
-            self.epoch += 1
-            old = self.session
-        if old:
-            self.cancel_remote(old["id"])
+        self.task.cancel()
         self.pool.shutdown(wait=True, cancel_futures=True)
         self.client.close()
 

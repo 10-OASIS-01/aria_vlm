@@ -34,6 +34,8 @@ client.close()
 | GET | `/api/health` | Process liveness, including model readiness boolean |
 | GET | `/api/ready` | Model state; 503 until ready |
 | GET | `/api/status` | Model, ASR, latest evaluation and recent sessions |
+| POST | `/v1/plan` | `{goal, history, frames, live?}` → next instruction. Stateless: the caller owns the task |
+| POST | `/v1/asr` | Same as `/api/transcribe` |
 | POST | `/api/sessions` | `{goal, source, task_id?}` → new session |
 | GET | `/api/sessions/{id}` | Goal, state, history, plans and client events |
 | POST | `/api/sessions/{id}/plan` | `{request_id, frames}` → next instruction |
@@ -57,7 +59,14 @@ Write requests require `Authorization: Bearer TOKEN` only when `ARIA_API_TOKEN` 
 
 The ROS bridge samples a bounded buffer. It requires a sufficiently complete window and rejects stale, duplicated or badly gapped captures. Images are JPEG encoded at a maximum edge of 640 pixels before transmission; Qwen's processor applies the configured pixel budget. With `ARIA_INPUT_MODE=video` (the default), the backend passes the 20 frames to the model as one 2 fps video. The `<t seconds>` timestamps the processor inserts come from that nominal rate, not from the client's capture times; the gap limits above keep the actual spacing close to it.
 
+## Stateless planning
+
+`POST /v1/plan` is what `guidance_node` uses. The body carries the goal, the dialogue `history` (at most 24 turns of `{role: user|assistant, text}`) and the 20 frames. `live` (default true) applies the frame age check; set it false for recorded frames. The response has `status`, `instruction`, `raw_output`, token counts, `timings`, `received_at_ms` and `responded_at_ms`. Nothing is stored. Busy is 429, a loading model 503, bad or stale frames 422.
+
 ## Session lifecycle
+
+The `/api/sessions` routes keep state on the server and serve the workbench.
+
 
 `ready → planning → awaiting_feedback → ready`, or `planning → awaiting_confirmation → completed`.
 

@@ -21,8 +21,7 @@ class Frame(StrictModel):
     image_base64: str = Field(min_length=32, max_length=2 * 1024 * 1024)
 
 
-class PlanRequest(StrictModel):
-    request_id: UUID
+class Window(StrictModel):
     frames: list[Frame] = Field(min_length=20, max_length=20)
 
     @model_validator(mode="after")
@@ -36,6 +35,24 @@ class PlanRequest(StrictModel):
         if max(b - a for a, b in pairwise(times)) > 1200:
             raise ValueError("Observation has a gap greater than 1.2 seconds")
         return self
+
+
+class PlanRequest(Window):
+    request_id: UUID
+
+
+class Turn(StrictModel):
+    role: Literal["user", "assistant"]
+    text: str = Field(max_length=1500)
+
+
+class PlanV1(Window):
+    """Stateless plan: the caller owns the goal and dialogue history."""
+
+    goal: str = Field(min_length=3, max_length=1500)
+    history: list[Turn] = Field(default=[], max_length=24)
+    # Live frames are checked for age; recorded ones are not.
+    live: bool = True
 
 
 class Feedback(StrictModel):

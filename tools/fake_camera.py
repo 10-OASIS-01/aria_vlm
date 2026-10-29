@@ -35,7 +35,7 @@ class FakeCamera(Node):
     def publish(self):
         pixels = self.still if self.still is not None else self.pattern()
         h, w = pixels.shape[:2]
-        # Wall-clock stamps: the bridge and the backend both compare frame age to time.time().
+        # Wall-clock stamps: guidance_node and the backend both compare frame age to time.time().
         now = time.time_ns()
         msg = Image(height=h, width=w, encoding="rgb8", step=w * 3)
         msg.data = array.array("B", pixels.tobytes())  # Same packing as aria_ros2.messages.

@@ -4,6 +4,7 @@ Run inside ROS: source aria2_ros2/activate.sh && python -m pytest aria_vlm/tests
 """
 
 import io
+import json
 import os
 import socket
 import sys
@@ -15,22 +16,23 @@ import pytest
 
 rclpy = pytest.importorskip("rclpy")
 
-import uvicorn  # noqa: E402
-from PIL import Image  # noqa: E402
-from rclpy.executors import MultiThreadedExecutor  # noqa: E402
-from rclpy.node import Node  # noqa: E402
-from rclpy.parameter import Parameter  # noqa: E402
-from std_msgs.msg import String  # noqa: E402
+import uvicorn
+from aria_guidance_ros.guidance_node import GuidanceNode
+from PIL import Image
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.qos import DurabilityPolicy, QoSProfile
+from std_msgs.msg import String
 
-from aria_guidance.config import Settings  # noqa: E402
-from aria_guidance.service import create_app  # noqa: E402
-from aria_guidance_ros.guidance_node import GuidanceNode  # noqa: E402
+from aria_guidance.config import Settings
+from aria_guidance.service import create_app
 
 # pytest 6 in the ROS venv ignores the pythonpath ini option.
 ROOT = Path(__file__).parents[2]
 sys.path[:0] = [str(ROOT / "tests"), str(ROOT / "tools")]
-from fake_camera import FakeCamera  # noqa: E402
-from stubs import StubEngine  # noqa: E402
+from fake_camera import FakeCamera
+from stubs import StubEngine
 
 
 def wait_for(predicate, timeout=10.0):
@@ -68,12 +70,19 @@ class Backend:
 
 
 class Probe(Node):
-    """Plays the operator: publishes like Foxglove panels and collects /aria/tts."""
+    """Plays the operator: publishes like Foxglove panels, collects /aria/tts and /guidance/state."""
 
     def __init__(self):
         super().__init__("probe")
-        self.tts, self.pubs = [], {}
+        self.tts, self.states, self.pubs = [], [], {}
         self.create_subscription(String, "/aria/tts", lambda m: self.tts.append(m.data), 10)
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(
+            String, "/guidance/state", lambda m: self.states.append(json.loads(m.data)), latched
+        )
+
+    def state(self):
+        return self.states[-1] if self.states else {}
 
     def publish(self, topic, text):
         if topic not in self.pubs:

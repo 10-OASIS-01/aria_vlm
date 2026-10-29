@@ -42,6 +42,13 @@ class GuidanceClient:
             },
         )
 
+    def plan_v1(self, goal, history, frames, live=True):
+        return self.request(
+            "POST",
+            "v1/plan",
+            json={"goal": goal, "history": history, "frames": frames, "live": live},
+        )
+
     def feedback(self, session_id, event="done", text=""):
         return self.request(
             "POST", f"api/sessions/{session_id}/feedback", json={"event": event, "text": text}
@@ -51,9 +58,7 @@ class GuidanceClient:
         return self.request("POST", f"api/sessions/{session_id}/events", json=payload)
 
     def transcribe(self, wav):
-        return self.request(
-            "POST", "api/transcribe", files={"file": ("speech.wav", wav, "audio/wav")}
-        )
+        return self.request("POST", "v1/asr", files={"file": ("speech.wav", wav, "audio/wav")})
 
     def close(self):
         self.http.close()

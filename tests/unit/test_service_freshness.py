@@ -6,10 +6,10 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from stubs import StubEngine
 
 from aria_guidance.config import Settings
 from aria_guidance.service import create_app
-from stubs import StubEngine
 
 
 def frames(newest_ms):

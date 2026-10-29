@@ -17,7 +17,7 @@ from .audio import SpeechRecognizer
 from .config import Settings
 from .engine import ModelBusy, QwenEngine
 from .frames import decode_image, encode_jpeg
-from .schemas import ClientEvent, Feedback, PlanRequest, SessionCreate
+from .schemas import ClientEvent, Feedback, PlanRequest, PlanV1, SessionCreate
 from .store import Conflict, Store
 
 LOGGER = logging.getLogger(__name__)
@@ -159,6 +159,59 @@ def create_app(settings=None, engine=None, load_model=True):
         for i, image in enumerate(images):
             (target / f"{i:02d}.jpg").write_bytes(encode_jpeg(image))
 
+    async def checked_images(body, live, received_at_ms):
+        if engine.state != "ready":
+            raise HTTPException(503, "Model is loading or unavailable; check /api/ready")
+        if engine.status().get("busy"):
+            raise HTTPException(429, "One inference is already running; retry after it finishes")
+        if live and settings.max_frame_age_ms:
+            age = received_at_ms - body.frames[-1].timestamp_ms
+            if not -3000 <= age <= settings.max_frame_age_ms:
+                raise HTTPException(
+                    422,
+                    f"Newest frame is {age / 1000:.1f} s old (allowed -3.0 to "
+                    f"{settings.max_frame_age_ms / 1000:.1f} s); check the camera stream and "
+                    "synchronize the client and server clocks",
+                )
+        try:
+            return await asyncio.to_thread(
+                lambda: [decode_image(f.image_base64) for f in body.frames]
+            )
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+
+    @app.post("/v1/plan")
+    async def plan_v1(body: PlanV1):
+        """Stateless step: the caller (guidance_node) owns the task state."""
+        started = time.perf_counter()
+        received_at_ms = time.time() * 1000
+        images = await checked_images(body, body.live, received_at_ms)
+        history = [t.model_dump() for t in body.history]
+        timestamps = [f.timestamp_ms for f in body.frames]
+        try:
+            result = await asyncio.to_thread(
+                engine.generate, body.goal, history, images, timestamps
+            )
+        except ModelBusy as e:
+            raise HTTPException(429, str(e)) from e
+        except Exception as e:
+            LOGGER.exception("Stateless planning failed")
+            reason = f"{type(e).__name__}: {e}"[:300]
+            raise HTTPException(503, f"Inference failed ({reason}); inspect server logs") from e
+        return {
+            "status": result.status,
+            "instruction": result.instruction,
+            "raw_output": result.raw_output,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "timings": {
+                **result.timings,
+                "server_total_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
+            "received_at_ms": received_at_ms,
+            "responded_at_ms": time.time() * 1000,
+        }
+
     @app.post("/api/sessions/{session_id}/plan")
     async def plan(session_id: UUID, body: PlanRequest):
         started = time.perf_counter()
@@ -175,25 +228,7 @@ def create_app(settings=None, engine=None, load_model=True):
             raise Conflict(
                 f"Request is {existing['state']}; use a new ID after resolving the state"
             )
-        if engine.state != "ready":
-            raise HTTPException(503, "Model is loading or unavailable; check /api/ready")
-        if engine.status().get("busy"):
-            raise HTTPException(429, "One inference is already running; retry after it finishes")
-        if session["source"] in {"aria", "webcam"} and settings.max_frame_age_ms:
-            age = received_at_ms - body.frames[-1].timestamp_ms
-            if not -3000 <= age <= settings.max_frame_age_ms:
-                raise HTTPException(
-                    422,
-                    f"Newest frame is {age / 1000:.1f} s old (allowed -3.0 to "
-                    f"{settings.max_frame_age_ms / 1000:.1f} s); check the camera stream and "
-                    "synchronize the client and server clocks",
-                )
-        try:
-            images = await asyncio.to_thread(
-                lambda: [decode_image(f.image_base64) for f in body.frames]
-            )
-        except ValueError as e:
-            raise HTTPException(422, str(e)) from e
+        images = await checked_images(body, session["source"] in {"aria", "webcam"}, received_at_ms)
         decode_ms = round((time.perf_counter() - started) * 1000, 2)
         session = store.reserve(sid, rid, fingerprint)
         try:
@@ -256,6 +291,7 @@ def create_app(settings=None, engine=None, load_model=True):
         return FileResponse(path, media_type="image/jpeg")
 
     @app.post("/api/transcribe")
+    @app.post("/v1/asr")
     async def transcribe(file: Annotated[UploadFile, File()]):
         data = await file.read(6 * 1024 * 1024 + 1)
         if len(data) > 6 * 1024 * 1024:

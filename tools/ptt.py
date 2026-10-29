@@ -1,8 +1,8 @@
-"""Debug-only push-to-talk window for the planner bridge.
+"""Push-to-talk window for guidance_node.
 
 Hold Space (window focused) or the mouse button to record; release to transcribe. It calls the
-bridge's /planner/listen service from one long-lived node, so no words are lost to CLI start-up.
-Also shows the live mic level, /planner/status and /planner/transcript.
+node's /guidance/talk service from one long-lived node, so no words are lost to CLI start-up.
+Also shows the live mic level, /guidance/state and /guidance/transcript.
 """
 
 import json
@@ -15,6 +15,7 @@ import rclpy
 from aria_msgs.msg import Audio
 from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
 
@@ -30,12 +31,13 @@ class Ptt(Node):
         super().__init__("ptt")
         self.events = events
         self.gain = float(self.declare_parameter("gain", 16.0).value)
-        self.listen = self.create_client(SetBool, "/planner/listen")
+        self.listen = self.create_client(SetBool, "/guidance/talk")
         self.chunks = []
         self.lock = threading.Lock()
         self.create_subscription(Audio, "/aria/audio", self.on_audio, 100)
-        self.create_subscription(String, "/planner/status", self.on_status, 10)
-        self.create_subscription(String, "/planner/transcript", self.on_transcript, 10)
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(String, "/guidance/state", self.on_status, latched)
+        self.create_subscription(String, "/guidance/transcript", self.on_transcript, 10)
 
     def on_audio(self, message):
         if message.sample_rate:
@@ -59,7 +61,7 @@ class Ptt(Node):
 
     def call(self, start, done):
         if not self.listen.service_is_ready():
-            self.events.put(("reply", "/planner/listen not available; is the bridge running?"))
+            self.events.put(("reply", "/guidance/talk not available; is guidance_node running?"))
             done(False)
             return
         future = self.listen.call_async(SetBool.Request(data=start))
@@ -76,7 +78,7 @@ class Window:
     def __init__(self, node, events):
         self.node, self.events = node, events
         self.held = False
-        self.recording = False  # Bridge accepted the start call.
+        self.recording = False  # Node accepted the start call.
         self.stop_wanted = False  # Released before the start reply arrived.
         self.release_job = None
 
@@ -84,8 +86,12 @@ class Window:
         self.root.title("Aria push-to-talk")
         self.root.geometry("560x300")
         self.button = tk.Label(
-            self.root, text="Hold SPACE or mouse to talk", font=("Sans", 18, "bold"),
-            bg="#2d3e50", fg="white", height=3,
+            self.root,
+            text="Hold SPACE or mouse to talk",
+            font=("Sans", 18, "bold"),
+            bg="#2d3e50",
+            fg="white",
+            height=3,
         )
         self.button.pack(fill="x", padx=10, pady=(10, 6))
         self.level = tk.Canvas(self.root, height=18, bg="#1b1b1b", highlightthickness=0)
@@ -94,7 +100,9 @@ class Window:
         self.level_text.pack(fill="x", padx=10)
         self.lines = {}
         for key in ("reply", "transcript", "status"):
-            label = tk.Label(self.root, anchor="w", justify="left", wraplength=530, font=("Sans", 11))
+            label = tk.Label(
+                self.root, anchor="w", justify="left", wraplength=530, font=("Sans", 11)
+            )
             label.pack(fill="x", padx=10, pady=2)
             self.lines[key] = label
         self.show("reply", "-")
@@ -198,7 +206,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        if window.recording:  # Do not leave the bridge recording.
+        if window.recording:  # Do not leave the node recording.
             node.listen.call_async(SetBool.Request(data=False))
         executor.shutdown(timeout_sec=1)
         node.destroy_node()

@@ -2,6 +2,25 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-29 — Task state in guidance_node, stateless backend (commit "Move task state into guidance_node, add stateless /v1/plan")
+
+**Changed behavior**
+- `guidance_node` owns the task: goal, the 24-turn dialogue history and the step state (`aria_guidance/task.py`). It calls the new stateless `POST /v1/plan` and no longer creates backend sessions or posts client events. A backend restart mid-task keeps the goal and history; the next reply plans again.
+- The `/planner/*` interface is replaced, with no aliases: `/guidance/goal`, `/guidance/reply` (was `/planner/command`), `/guidance/note` (new), `/guidance/talk` (was `/planner/listen`), `/guidance/state` (was `/planner/status`, now transient-local with `task`, `goal` and `instruction` fields) and `/guidance/transcript`.
+- Confirming a completion is local and immediate; it no longer waits for a backend round trip.
+- A new plan waits for an older request still in flight instead of hitting 429.
+- A result older than `max_result_age_seconds` now fails the step (state `error`) instead of being kept in history unspoken. Say `next` to observe again.
+- `note: ...` (spoken or on `/guidance/reply`) and `/guidance/note` are accepted. They are only logged until trial recording lands.
+
+**Added**
+- Backend: `POST /v1/plan` (`{goal, history, frames, live}`) and `POST /v1/asr`. `/api/sessions*` stays for the workbench.
+- `GuidanceClient.plan_v1`; `GuidanceClient.transcribe` now calls `/v1/asr`.
+- Tests: `test_task.py`, `test_v1_plan.py`, `test_client.py`, `test_audio.py`, and ROS integration tests for confirm, cancel during inference, backend restart and a stopped camera.
+
+**Upgrade notes**
+- Rebuild is not needed with `--symlink-install`; restart the backend and `guidance_node`.
+- Retarget scripts from `/planner/*` to `/guidance/*`. `tools/ptt.py` and the VS Code tasks are already retargeted.
+
 ## 2026-10-29 — Rename to aria_guidance_ros, test harness (commit "Rename bridge to aria_guidance_ros, add integration test harness")
 
 No behavior change; the `/planner/*` topics are unchanged.
