@@ -110,3 +110,25 @@ def test_shutdown_aborts_the_trial(probe, node, camera, backend, tmp_path):
     heard(probe, node, 1)
     node.close()
     assert trials(tmp_path)[0][0]["outcome"] == "aborted"
+
+
+def test_preview_and_plain_topics_for_foxglove(probe, node, camera, backend):
+    from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
+    from sensor_msgs.msg import CompressedImage
+    from std_msgs.msg import String
+
+    previews, plain = [], {}
+    probe.create_subscription(
+        CompressedImage, "/guidance/preview/compressed", previews.append, qos_profile_sensor_data
+    )
+    latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+    for name in ("task", "instruction"):
+        probe.create_subscription(
+            String, f"/guidance/{name}", lambda m, n=name: plain.update({n: m.data}), latched
+        )
+    wait_for(lambda: previews)
+    assert previews[0].format == "jpeg" and bytes(previews[0].data[:2]) == b"\xff\xd8"
+    probe.publish("/guidance/goal", "Pick up the pen")
+    heard(probe, node, 1)
+    wait_for(lambda: plain.get("instruction") == "Pick up the pen.")
+    assert plain["task"] == "awaiting_feedback"

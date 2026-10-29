@@ -1,0 +1,208 @@
+{
+  "configById": {
+    "Indicator!task": {
+      "path": "/guidance/task.data",
+      "style": "background",
+      "fallbackColor": "#344054",
+      "fallbackLabel": "NO GOAL",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "ready",
+          "label": "OBSERVING",
+          "color": "#1d4ed8"
+        },
+        {
+          "operator": "=",
+          "rawValue": "planning",
+          "label": "THINKING",
+          "color": "#b54708"
+        },
+        {
+          "operator": "=",
+          "rawValue": "awaiting_feedback",
+          "label": "ACT, THEN SAY DONE",
+          "color": "#067647"
+        },
+        {
+          "operator": "=",
+          "rawValue": "awaiting_confirmation",
+          "label": "CONFIRM: DONE OR NEXT",
+          "color": "#6941c6"
+        },
+        {
+          "operator": "=",
+          "rawValue": "completed",
+          "label": "COMPLETE",
+          "color": "#085d3a"
+        },
+        {
+          "operator": "=",
+          "rawValue": "error",
+          "label": "ERROR: SAY NEXT",
+          "color": "#b42318"
+        },
+        {
+          "operator": "=",
+          "rawValue": "cancelled",
+          "label": "CANCELLED",
+          "color": "#475467"
+        }
+      ]
+    },
+    "Image!preview": {
+      "imageMode": {
+        "imageTopic": "/guidance/preview/compressed"
+      }
+    },
+    "RawMessages!instruction": {
+      "topicPath": "/guidance/instruction.data",
+      "fontSize": 36,
+      "expansion": "all",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false
+    },
+    "Publish!done": {
+      "topicName": "/guidance/reply",
+      "datatype": "std_msgs/msg/String",
+      "buttonText": "Done",
+      "buttonTooltip": "",
+      "buttonColor": "#067647",
+      "advancedView": false,
+      "value": "{\n  \"data\": \"done\"\n}"
+    },
+    "Publish!next": {
+      "topicName": "/guidance/reply",
+      "datatype": "std_msgs/msg/String",
+      "buttonText": "Next",
+      "buttonTooltip": "",
+      "buttonColor": "#1d4ed8",
+      "advancedView": false,
+      "value": "{\n  \"data\": \"next\"\n}"
+    },
+    "Publish!repeat": {
+      "topicName": "/guidance/reply",
+      "datatype": "std_msgs/msg/String",
+      "buttonText": "Repeat",
+      "buttonTooltip": "",
+      "buttonColor": "#475467",
+      "advancedView": false,
+      "value": "{\n  \"data\": \"repeat\"\n}"
+    },
+    "Publish!cancel": {
+      "topicName": "/guidance/reply",
+      "datatype": "std_msgs/msg/String",
+      "buttonText": "Cancel",
+      "buttonTooltip": "",
+      "buttonColor": "#b42318",
+      "advancedView": false,
+      "value": "{\n  \"data\": \"cancel\"\n}"
+    },
+    "CallService!talkon": {
+      "serviceName": "/guidance/talk",
+      "requestPayload": "{\n  \"data\": true\n}",
+      "buttonText": "Talk on",
+      "buttonTooltip": "Push-to-talk on the glasses' microphone",
+      "buttonColor": "#b42318",
+      "editingMode": false
+    },
+    "CallService!talkoff": {
+      "serviceName": "/guidance/talk",
+      "requestPayload": "{\n  \"data\": false\n}",
+      "buttonText": "Talk off",
+      "buttonTooltip": "Push-to-talk on the glasses' microphone",
+      "buttonColor": "#475467",
+      "editingMode": false
+    },
+    "Publish!goal": {
+      "topicName": "/guidance/goal",
+      "datatype": "std_msgs/msg/String",
+      "buttonText": "Set goal",
+      "buttonTooltip": "",
+      "buttonColor": "#1d4ed8",
+      "advancedView": true,
+      "value": "{\n  \"data\": \"Pick up the black marker on the table\"\n}"
+    },
+    "Publish!note": {
+      "topicName": "/guidance/note",
+      "datatype": "std_msgs/msg/String",
+      "buttonText": "Add note",
+      "buttonTooltip": "",
+      "buttonColor": "#6941c6",
+      "advancedView": true,
+      "value": "{\n  \"data\": \"\"\n}"
+    },
+    "RosOut!log": {
+      "searchTerms": [],
+      "minLogLevel": 2,
+      "nameFilter": {
+        "guidance_node": {
+          "visible": true
+        }
+      }
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "direction": "row",
+    "first": {
+      "direction": "column",
+      "first": "Indicator!task",
+      "second": {
+        "direction": "column",
+        "first": "Image!preview",
+        "second": "RawMessages!instruction",
+        "splitPercentage": 68
+      },
+      "splitPercentage": 13
+    },
+    "second": {
+      "direction": "column",
+      "first": {
+        "direction": "row",
+        "first": "Publish!done",
+        "second": "Publish!next",
+        "splitPercentage": 50.0
+      },
+      "second": {
+        "direction": "column",
+        "first": {
+          "direction": "row",
+          "first": "CallService!talkon",
+          "second": "CallService!talkoff",
+          "splitPercentage": 50.0
+        },
+        "second": {
+          "direction": "column",
+          "first": {
+            "direction": "row",
+            "first": "Publish!repeat",
+            "second": "Publish!cancel",
+            "splitPercentage": 50.0
+          },
+          "second": {
+            "direction": "column",
+            "first": {
+              "direction": "row",
+              "first": "Publish!goal",
+              "second": "Publish!note",
+              "splitPercentage": 50.0
+            },
+            "second": "RosOut!log",
+            "splitPercentage": 45
+          },
+          "splitPercentage": 15
+        },
+        "splitPercentage": 14
+      },
+      "splitPercentage": 12
+    },
+    "splitPercentage": 64
+  }
+}

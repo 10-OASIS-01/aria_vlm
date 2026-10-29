@@ -123,8 +123,11 @@ def executor():
     thread = threading.Thread(target=executor.spin, daemon=True)
     thread.start()
     yield executor
+    nodes = executor.get_nodes()
     executor.shutdown()
     thread.join(5)
+    for node in nodes:  # Only after spinning stops, or callbacks hit destroyed handles.
+        node.destroy_node()
 
 
 @pytest.fixture
@@ -145,9 +148,7 @@ def node(executor, backend, tmp_path):
     node = GuidanceNode(parameter_overrides=[Parameter(k, value=v) for k, v in params.items()])
     executor.add_node(node)
     yield node
-    executor.remove_node(node)
     node.close()
-    node.destroy_node()
 
 
 @pytest.fixture
@@ -160,15 +161,11 @@ def camera(executor, node):
         node.frames.add(now - 10_000 + i * 200, buffer.getvalue())
     camera = FakeCamera()
     executor.add_node(camera)
-    yield camera
-    executor.remove_node(camera)
-    camera.destroy_node()
+    return camera
 
 
 @pytest.fixture
 def probe(executor):
     probe = Probe()
     executor.add_node(probe)
-    yield probe
-    executor.remove_node(probe)
-    probe.destroy_node()
+    return probe

@@ -15,7 +15,7 @@ import rclpy
 from aria_msgs.msg import Audio
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
 
@@ -72,6 +72,12 @@ class GuidanceNode(Node):
         self.audio_busy = False
         self.last_wait_log = 0.0
         self.state_pub = self.create_publisher(String, "/guidance/state", LATCHED)
+        # Plain strings for Foxglove panels, which cannot read fields inside the state JSON.
+        self.task_pub = self.create_publisher(String, "/guidance/task", LATCHED)
+        self.instruction_pub = self.create_publisher(String, "/guidance/instruction", LATCHED)
+        self.preview_pub = self.create_publisher(
+            CompressedImage, "/guidance/preview/compressed", qos_profile_sensor_data
+        )
         self.transcript_pub = self.create_publisher(String, "/guidance/transcript", 10)
         self.tts_pub = self.create_publisher(String, self.config["tts_topic"], 10)
         self.create_subscription(
@@ -95,6 +101,8 @@ class GuidanceNode(Node):
             "instruction": last["instruction"] if last else None,
         }
         self.state_pub.publish(String(data=json.dumps(body, ensure_ascii=False)))
+        self.task_pub.publish(String(data=self.task.state))
+        self.instruction_pub.publish(String(data=body["instruction"] or ""))
         self.get_logger().info(f"{state}: {detail}")
         if state != self.last_state:
             self.last_state = state
@@ -119,6 +127,10 @@ class GuidanceNode(Node):
             return
         if self.frames.add(ts, jpeg):
             self.last_image_ms = ts
+            # The 640 px JPEG already made for the model; Foxglove never pulls the raw frames.
+            self.preview_pub.publish(
+                CompressedImage(header=message.header, format="jpeg", data=jpeg)
+            )
             path = self.trial.frame_path(ts)
             if path:
                 self.pool.submit(path.write_bytes, jpeg)
@@ -332,6 +344,7 @@ class GuidanceNode(Node):
             elif kind == "transcript":
                 text = payload["text"]
                 self.transcript_pub.publish(String(data=text))
+                self.get_logger().info(f"heard: {text}")
                 self.record("transcript", text=text, duration_ms=payload.get("duration_ms"))
                 if text:
                     self.reply(text)

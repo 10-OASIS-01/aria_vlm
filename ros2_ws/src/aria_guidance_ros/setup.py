@@ -12,6 +12,7 @@ setup(
         (f"share/{name}", ["package.xml"]),
         (f"share/{name}/launch", glob("launch/*.py")),
         (f"share/{name}/config", glob("config/*.yaml")),
+        (f"share/{name}/foxglove", glob("foxglove/*.json")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

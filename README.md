@@ -36,6 +36,8 @@ The existing Aria node **publishes three topics and subscribes to one**. Those a
 | `/guidance/talk` | `std_srvs/srv/SetBool` | Push-to-talk: `true` starts recording, `false` transcribes |
 | `/guidance/state` | `std_msgs/msg/String` | JSON `{state, detail, task, goal, instruction}`; transient-local |
 | `/guidance/transcript` | `std_msgs/msg/String` | What the recognizer heard |
+| `/guidance/task`, `/guidance/instruction` | `std_msgs/msg/String` | Task state and current instruction as plain text, for Foxglove; transient-local |
+| `/guidance/preview/compressed` | `sensor_msgs/msg/CompressedImage` | The 640 px JPEG sent to the model, about 5 Hz |
 
 Topic names for vision, audio and TTS are configurable.
 
@@ -184,6 +186,20 @@ ros2 launch aria_guidance_ros guidance.launch.py backend_url:=http://127.0.0.1:8
 For a backend behind a prefix, pass the complete base URL, for example `backend_url:=http://GPU_HOST:443/aria`. A custom YAML file can be supplied with `config:=...`; see [guidance.yaml](ros2_ws/src/aria_guidance_ros/config/guidance.yaml). Use `ros2 topic list -t` to confirm the actual camera/audio/TTS names and change those three parameters if your lab's configuration differs.
 
 ## 4. Run a task through the glasses
+
+### Operator console
+
+`guidance.launch.py` also starts `foxglove_bridge` on port 8765. It forwards only `/guidance/*`, `/aria/tts` and `/rosout`, and accepts publishing only on `/guidance/*`. In Foxglove, open a connection to `ws://localhost:8765` (or the ROS host's address) and import [operator_layout.json](ros2_ws/src/aria_guidance_ros/foxglove/operator_layout.json). It shows:
+
+- the task state as a full-width colour band (`/guidance/task`);
+- the 640 px preview the model sees (`/guidance/preview/compressed`, about 5 Hz);
+- the current instruction in large text (`/guidance/instruction`);
+- Done and Next, Talk on and Talk off, then Repeat and Cancel;
+- Goal and Note editors, and the node's log (states, transcripts, notes).
+
+Foxglove has no hold-to-talk button. For hands-free speech, hold Space in `tools/ptt.py`. Rerun (`viewer.enable` in aria_node) stays the device-debug viewer; keep it off during trials.
+
+### From a terminal
 
 In a sourced ROS terminal, watch the node:
 

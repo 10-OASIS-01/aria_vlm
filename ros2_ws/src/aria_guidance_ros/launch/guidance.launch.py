@@ -25,5 +25,19 @@ def generate_launch_description():
                     },
                 ],
             ),
+            # The operator console: open ws://localhost:8765 in Foxglove, load operator_layout.json.
+            Node(
+                package="foxglove_bridge",
+                executable="foxglove_bridge",
+                name="foxglove_bridge",
+                parameters=[
+                    {
+                        "port": 8765,
+                        "topic_whitelist": ["/guidance/.*", "/aria/tts", "/rosout"],
+                        "service_whitelist": ["/guidance/.*"],
+                        "client_topic_whitelist": ["/guidance/.*"],
+                    }
+                ],
+            ),
         ]
     )

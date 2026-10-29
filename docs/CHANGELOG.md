@@ -2,6 +2,18 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-29 — Foxglove operator console (commit "Add Foxglove operator console")
+
+**Added**
+- `guidance.launch.py` starts `foxglove_bridge` on port 8765. It forwards `/guidance/.*`, `/aria/tts` and `/rosout`, and lets clients publish only on `/guidance/.*`.
+- `foxglove/operator_layout.json`: state band, preview, large instruction text, Done/Next, Talk on/off, Repeat/Cancel, Goal and Note editors, and the node log.
+- Topics `/guidance/preview/compressed` (the 640 px JPEG already made for the model), `/guidance/task` and `/guidance/instruction` (plain strings, transient-local; Foxglove panels cannot read fields inside the `/guidance/state` JSON).
+- Transcripts are logged as `heard: ...`, so they show in the Foxglove log panel.
+
+**Upgrade notes**
+- Rebuild once (`colcon build --symlink-install --packages-select aria_guidance_ros`) to install the layout and launch changes. `foxglove_bridge` must be installed (`ros-humble-foxglove-bridge`).
+- The bridge listens on all interfaces. Anyone who can reach port 8765 can publish goals and replies.
+
 ## 2026-10-29 — Trial recording (commit "Record each goal as a trial next to the aria_node session")
 
 **Added**
