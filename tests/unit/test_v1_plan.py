@@ -1,3 +1,4 @@
+import re
 import time
 
 import pytest
@@ -61,7 +62,7 @@ def test_failed_inference_returns_503_with_reason(client, engine):
 def test_stale_live_frames_return_422(client):
     response = plan(client, newest_ms=time.time() * 1000 - 11_400)
     assert response.status_code == 422
-    assert "11.4 s old" in response.json()["detail"]
+    assert re.search(r"11\.\d s old", response.json()["detail"])
 
 
 def test_recorded_frames_skip_age_check(client):

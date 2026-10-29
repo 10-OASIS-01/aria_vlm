@@ -14,6 +14,7 @@
     <a href="#overview"><span>◫</span> Overview</a>
     <a href="#experiments"><span>◉</span> Experiments</a>
     <a href="#workbench"><span>▷</span> Try a task</a>
+    <a href="#trials"><span>▤</span> Trials</a>
     <a href="#connect"><span>⇄</span> Connect Aria</a>
   </nav>
   <div class="sidebar-bottom"><span class="tiny-dot"></span> MVP · October 2026<p>Observe the world.<br>Guide the next step.</p></div>
@@ -58,6 +59,31 @@
         <p id="trial-status" role="status" class="form-status">Checking model availability…</p>
       </form>
       <article class="card instruction-panel"><div class="card-top"><span class="eyebrow">NEXT INSTRUCTION</span><span class="badge subtle" id="instruction-state">Waiting for a clip</span></div><img id="clip-preview" alt="Latest sampled observation" hidden><div class="instruction-body"><span class="quote-mark">“</span><p id="instruction-text">A clear observation.<br>A useful next step.</p></div><div class="instruction-meta" id="instruction-meta">Your task session will appear here.</div></article>
+    </div>
+  </section>
+
+  <section id="trials" aria-labelledby="trials-title">
+    <div class="heading-row"><div><h2 id="trials-title">Trials</h2><p>Each goal given to guidance_node, as the model saw it. Watch, read the exchange, record a verdict.</p></div><button class="button light" type="button" id="trials-refresh">Refresh</button></div>
+    <div class="trials-grid">
+      <nav class="card trial-list" aria-label="Recorded trials"><ul id="trial-list"><li class="trial-empty">Loading trials…</li></ul></nav>
+      <article class="card trial-detail" id="trial-detail" aria-live="polite">
+        <div class="trial-placeholder" id="trial-placeholder"><h3>No trial selected</h3><p>Pick a trial on the left. Trials appear here once guidance_node receives a goal.</p></div>
+        <div id="trial-view" hidden>
+          <div class="trial-head"><h3 id="trial-goal"></h3><span class="badge" id="trial-outcome"></span></div>
+          <p class="trial-meta" id="trial-meta"></p>
+          <div class="trial-media"><video id="trial-video" controls preload="metadata" playsinline aria-label="Trial video from the glasses' camera"></video><p class="trial-novideo" id="trial-novideo" hidden>No camera frames were recorded for this trial.</p></div>
+          <div class="trial-columns">
+            <section class="trial-review" aria-labelledby="review-title">
+              <h4 id="review-title">Verdict</h4>
+              <div class="verdict" role="group" aria-label="Verdict"><button type="button" class="verdict-button" data-verdict="success" aria-pressed="false">✓ Success</button><button type="button" class="verdict-button" data-verdict="fail" aria-pressed="false">✗ Fail</button></div>
+              <label for="trial-notes">Review notes</label>
+              <textarea id="trial-notes" rows="5" maxlength="10000" placeholder="What went well, what went wrong, anything to rerun."></textarea>
+              <p class="review-status" id="review-status" role="status"></p>
+            </section>
+            <section class="trial-timeline" aria-labelledby="timeline-title"><h4 id="timeline-title">Timeline <small>Select an event to jump the video there</small></h4><ol id="trial-events"></ol></section>
+          </div>
+        </div>
+      </article>
     </div>
   </section>
 

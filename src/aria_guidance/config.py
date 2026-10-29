@@ -18,6 +18,10 @@ class Settings:
     max_frame_age_ms: int = field(
         default_factory=lambda: int(os.getenv("ARIA_MAX_FRAME_AGE_MS", "5000"))
     )
+    # aria_node's session folders, where guidance_node writes trials (also .runtime/guidance).
+    sessions_dir: Path = field(
+        default_factory=lambda: Path(os.getenv("ARIA_SESSIONS_DIR", "../aria2_ros2/data/aria"))
+    )
     max_new_tokens: int = 96
     asr_model_path: str = field(default_factory=lambda: os.getenv("ARIA_ASR_MODEL_PATH", ""))
     api_token: str = field(default_factory=lambda: os.getenv("ARIA_API_TOKEN", ""))
@@ -32,3 +36,4 @@ class Settings:
         if self.max_frame_age_ms < 0:
             raise ValueError("ARIA_MAX_FRAME_AGE_MS must be 0 (disabled) or positive")
         self.data_dir = self.data_dir.expanduser().resolve()
+        self.sessions_dir = self.sessions_dir.expanduser().resolve()

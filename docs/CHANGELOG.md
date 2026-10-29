@@ -2,6 +2,20 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-29 — Trials review page (commit "Add Trials review page to the workbench")
+
+**Added**
+- Workbench **Trials** section (`/#trials`, deep links `#trials/<session>/<trial>`): trial list with outcome and verdict, the trial video, a timeline of goal, spoken instructions, replies, transcripts and notes (select one to seek), and Success/Fail plus review notes saved on change. Open trials show as Live and refresh every 15 s.
+- Routes `GET /api/trials`, `GET /api/trials/{session}/{trial}`, `GET .../video.mp4` and `PUT .../review` (token-guarded like every write). Session and trial IDs must be single safe path segments and resolve inside a trials root; anything else is 404.
+- The video is encoded with PyAV from `frames/`, with each frame at its capture time and no B-frames, so seeking matches the timeline. It is cached in the trial folder once the trial closes.
+- `ARIA_SESSIONS_DIR` (default `../aria2_ros2/data/aria`) names aria_node's session folders; `.runtime/guidance` is always searched too.
+
+**Fixed**
+- Two frame-age tests compared the age to a tenth of a second and failed under load.
+
+**Upgrade notes**
+- Set `ARIA_SESSIONS_DIR` in `.env` if the backend does not run from `aria_vlm/` next to `aria2_ros2/`. PyAV comes with the `speech` extra; without it the video route fails.
+
 ## 2026-10-29 — Foxglove operator console (commit "Add Foxglove operator console")
 
 **Added**

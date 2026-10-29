@@ -1,5 +1,6 @@
 import base64
 import io
+import re
 import time
 import uuid
 
@@ -44,7 +45,8 @@ def test_recent_live_frames_are_accepted(client):
 def test_old_live_frames_are_rejected_with_age(client):
     response = plan(client(), "aria", time.time() * 1000 - 11_400)
     assert response.status_code == 422
-    assert "Newest frame is 11.4 s old" in response.json()["detail"]
+    # 11.4 s plus however long the request took.
+    assert re.search(r"Newest frame is 11\.\d s old", response.json()["detail"])
 
 
 def test_future_live_frames_are_rejected(client):

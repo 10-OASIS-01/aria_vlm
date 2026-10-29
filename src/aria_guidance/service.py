@@ -17,8 +17,9 @@ from .audio import SpeechRecognizer
 from .config import Settings
 from .engine import ModelBusy, QwenEngine
 from .frames import decode_image, encode_jpeg
-from .schemas import ClientEvent, Feedback, PlanRequest, PlanV1, SessionCreate
+from .schemas import ClientEvent, Feedback, PlanRequest, PlanV1, Review, SessionCreate
 from .store import Conflict, Store
+from .trial import find_trial, list_trials, read_trial, trial_video, write_review
 
 LOGGER = logging.getLogger(__name__)
 
@@ -75,6 +76,7 @@ def create_app(settings=None, engine=None, load_model=True):
     runs.mkdir(exist_ok=True)
     reports = settings.data_dir / "reports"
     reports.mkdir(exist_ok=True)
+    trial_roots = [settings.sessions_dir, settings.data_dir / "guidance"]
 
     @asynccontextmanager
     async def lifespan(app):
@@ -304,6 +306,26 @@ def create_app(settings=None, engine=None, load_model=True):
             raise HTTPException(422, str(e)) from e
         except RuntimeError as e:
             raise HTTPException(503, str(e)) from e
+
+    @app.get("/api/trials")
+    def trials():
+        return list_trials(trial_roots)
+
+    @app.get("/api/trials/{session}/{trial}")
+    def trial_detail(session: str, trial: str):
+        return read_trial(find_trial(trial_roots, session, trial))
+
+    @app.get("/api/trials/{session}/{trial}/video.mp4")
+    async def trial_mp4(session: str, trial: str):
+        path = await asyncio.to_thread(trial_video, find_trial(trial_roots, session, trial))
+        if path is None:
+            raise HTTPException(404, "This trial has no frames")
+        # Open trials are re-encoded as frames arrive; closed ones are cached.
+        return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "no-cache"})
+
+    @app.put("/api/trials/{session}/{trial}/review")
+    def review(session: str, trial: str, body: Review):
+        return write_review(find_trial(trial_roots, session, trial), body.verdict, body.notes)
 
     @app.get("/api/reports/latest")
     def report():

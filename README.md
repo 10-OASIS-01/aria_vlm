@@ -248,6 +248,8 @@ Every goal is a trial, written to disk with nothing to save by hand. It goes int
 
 The outcome is `completed`, `cancelled`, `replaced` (a new goal), `aborted` (node shutdown), or null while the trial is open. Notes come from `/guidance/note` or a spoken `note: ...`.
 
+Review trials in the workbench at `/#trials`: pick one to watch its video (built from `frames/` on first view, timed by the capture stamps), select a timeline event to jump there, and mark the verdict and notes, saved to `review.json` in the trial folder. The backend finds trials under `ARIA_SESSIONS_DIR` (default `../aria2_ros2/data/aria`) and `.runtime/guidance`. Video encoding uses PyAV, installed with the `speech` extra. `#trials/<session>/<trial>` links straight to one trial.
+
 ### Speaking to the node
 
 Start recording, speak normally, then stop recording. No wake word or special phrasing is needed. What happens to the transcript depends on whether a task is active and on the exact words:

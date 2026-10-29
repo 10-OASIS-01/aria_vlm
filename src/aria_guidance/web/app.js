@@ -103,6 +103,64 @@ $("#trial-form").onsubmit=async(e)=>{
 function uuidFallback(){const a=crypto.getRandomValues(new Uint8Array(16));a[6]=(a[6]&15)|64;a[8]=(a[8]&63)|128;const s=Array.from(a,x=>x.toString(16).padStart(2,"0")).join("");return `${s.slice(0,8)}-${s.slice(8,12)}-${s.slice(12,16)}-${s.slice(16,20)}-${s.slice(20)}`;}
 $("#confirm-button").onclick=async()=>{const current=state.session;if(!current||state.busy)return;state.busy=true;try{await api(`api/sessions/${current.id}/feedback`,{method:"POST",body:JSON.stringify({event:"confirm"})});state.session=null;$("#confirm-button").hidden=true;$("#instruction-state").textContent="Task complete";$("#trial-status").textContent="Goal complete. Reset to start another task.";}catch(err){toast(err.message);}finally{state.busy=false;}};
 $("#cancel-button").onclick=async()=>{state.epoch++;const old=state.session;state.session=null;$("#confirm-button").hidden=true;$("#trial-status").textContent="Task reset. Start with a new goal and clip.";$("#instruction-text").textContent="Ready for a new task.";$("#instruction-state").textContent="Waiting for a clip";$("#clip-preview").hidden=true;$("#clip").value="";if(old){try{await api(`api/sessions/${old.id}/feedback`,{method:"POST",body:JSON.stringify({event:"cancel"})});}catch(err){toast(err.message);}}};
+// Trials: review of what guidance_node recorded, one folder per goal.
+const trials={list:[],current:null,detail:null,events:[]};
+const OUTCOMES={completed:["Completed","ready"],cancelled:["Cancelled","subtle"],replaced:["Replaced","subtle"],aborted:["Aborted","error"]};
+const EVENT_LABELS={goal:"Goal",tts:"Spoken",reply:"Reply",transcript:"Heard",note:"Note",error:"Error",end:"End"};
+const trialURL=(t,suffix="")=>`api/trials/${encodeURIComponent(t.session)}/${encodeURIComponent(t.id)}${suffix}`;
+const clock=(ms)=>{const s=Math.max(0,Math.round(ms/1000));return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;};
+const when=(ms)=>ms?new Date(ms).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):"Unknown time";
+function outcomeBadge(t){const [label,cls]=OUTCOMES[t.outcome]||["Live","loading"];return {label,cls};}
+function renderTrialList(){
+  const list=$("#trial-list");
+  if(!trials.list.length){list.innerHTML=`<li class="trial-empty"><strong>No trials yet.</strong> Start guidance_node and give it a goal; every goal is recorded here with its video and timeline.</li>`;return;}
+  list.innerHTML=trials.list.map((t,i)=>{const b=outcomeBadge(t),current=trials.current&&trials.current.session===t.session&&trials.current.id===t.id;
+    const verdict=t.verdict==="success"?`<span class="mark pass" title="Marked success">✓<span class="sr">Success</span></span>`:t.verdict==="fail"?`<span class="mark fail" title="Marked fail">✗<span class="sr">Fail</span></span>`:"";
+    return `<li><button type="button" class="trial-row" data-trial="${i}"${current?' aria-current="true"':""}><span class="trial-row-goal">${esc(t.goal)}</span><span class="trial-row-meta">${esc(when(t.started_ms))} · ${t.steps||0} step${t.steps===1?"":"s"}<span class="badge ${b.cls}">${b.label}</span>${verdict}</span></button></li>`;}).join("");
+  list.querySelectorAll("[data-trial]").forEach(b=>b.onclick=()=>openTrial(trials.list[Number(b.dataset.trial)]));
+}
+async function loadTrials(){
+  try{trials.list=await api("api/trials");renderTrialList();const link=location.hash.match(/^#trials\/([^/]+)\/([^/]+)$/);if(link&&!trials.current){const t=trials.list.find(x=>x.session===decodeURIComponent(link[1])&&x.id===decodeURIComponent(link[2]));if(t){openTrial(t);$("#trials").scrollIntoView();}}if(trials.current){const t=trials.list.find(x=>x.session===trials.current.session&&x.id===trials.current.id);if(t&&t.outcome!==trials.current.outcome)openTrial(t);}}
+  catch(err){$("#trial-list").innerHTML=`<li class="trial-empty error-text">Trials could not be loaded: ${esc(err.message)}</li>`;}
+}
+function eventText(e){return e.kind==="end"?`Trial ended: ${e.outcome}`:e.text||"";}
+async function openTrial(t){
+  trials.current=t;renderTrialList();
+  history.replaceState(null,"",`#trials/${encodeURIComponent(t.session)}/${encodeURIComponent(t.id)}`);
+  let detail;
+  try{detail=await api(trialURL(t));}catch(err){toast(err.message);return;}
+  if(trials.current!==t)return;
+  trials.detail=detail;
+  const info=detail.trial,b=outcomeBadge(info);
+  $("#trial-placeholder").hidden=true;$("#trial-view").hidden=false;
+  $("#trial-goal").textContent=info.goal;
+  $("#trial-outcome").textContent=b.label;$("#trial-outcome").className=`badge ${b.cls}`;
+  const latency=info.latency_ms?` · plan round trip ${seconds(info.latency_ms.mean)} mean, ${seconds(info.latency_ms.max)} max`:"";
+  $("#trial-meta").textContent=`${when(info.started_ms)} · session ${info.session} · ${info.steps||0} step${info.steps===1?"":"s"}${latency}`;
+  const video=$("#trial-video");
+  $("#trial-novideo").hidden=detail.frames>0;video.hidden=!detail.frames;
+  if(detail.frames)video.src=localURL(trialURL(t,`/video.mp4${info.outcome?"":`?at=${Date.now()}`}`));else video.removeAttribute("src");
+  trials.events=detail.events.filter(e=>EVENT_LABELS[e.kind]).map(e=>({...e,offset:detail.video_start_ms==null?null:e.t_ms-detail.video_start_ms}));
+  $("#trial-events").innerHTML=trials.events.length?trials.events.map((e,i)=>`<li><button type="button" class="event kind-${e.kind}" data-event="${i}"${e.offset==null?" disabled":""}><span class="event-time">${e.offset==null?"–":clock(e.offset)}</span><span class="event-kind">${EVENT_LABELS[e.kind]}</span><span class="event-text">${esc(eventText(e))}</span></button></li>`).join(""):`<li class="trial-empty">No events were recorded.</li>`;
+  $("#trial-events").querySelectorAll("[data-event]").forEach(el=>el.onclick=()=>{video.currentTime=Math.max(0,trials.events[Number(el.dataset.event)].offset/1000);video.play().catch(()=>{});});
+  renderReview(detail.review);$("#review-status").textContent="";
+}
+function renderReview(review){
+  document.querySelectorAll(".verdict-button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.verdict===review.verdict)));
+  $("#trial-notes").value=review.notes||"";
+}
+async function saveReview(){
+  const t=trials.current,d=trials.detail;if(!t||!d)return;
+  const verdict=document.querySelector('.verdict-button[aria-pressed="true"]')?.dataset.verdict||null,notes=$("#trial-notes").value;
+  $("#review-status").textContent="Saving…";$("#review-status").classList.remove("error-text");
+  try{d.review=await api(trialURL(t,"/review"),{method:"PUT",body:JSON.stringify({verdict,notes})});t.verdict=verdict;renderTrialList();$("#review-status").textContent=`Saved ${new Date(d.review.updated_at*1000).toLocaleTimeString()}`;}
+  catch(err){$("#review-status").textContent=`Not saved: ${err.message}`;$("#review-status").classList.add("error-text");}
+}
+document.querySelectorAll(".verdict-button").forEach(b=>b.onclick=()=>{const on=b.getAttribute("aria-pressed")!=="true";document.querySelectorAll(".verdict-button").forEach(x=>x.setAttribute("aria-pressed",String(x===b&&on)));saveReview();});
+$("#trial-notes").addEventListener("blur",()=>{if(trials.detail&&$("#trial-notes").value!==(trials.detail.review.notes||""))saveReview();});
+$("#trial-video").addEventListener("timeupdate",()=>{const now=$("#trial-video").currentTime*1000;let last=-1;trials.events.forEach((e,i)=>{if(e.offset!=null&&e.offset<=now)last=i;});document.querySelectorAll("#trial-events .event").forEach((el,i)=>el.classList.toggle("playing",i===last));});
+$("#trials-refresh").onclick=()=>{loadTrials();if(trials.current)openTrial(trials.current);};
+loadTrials();setInterval(loadTrials,15000);
 const observer=new IntersectionObserver(entries=>{for(const e of entries)if(e.isIntersecting){document.querySelectorAll(".sidebar nav a").forEach(a=>a.classList.toggle("active",a.hash===`#${e.target.id}`));}},{rootMargin:"-15% 0px -60% 0px"});
-document.querySelectorAll("main section").forEach(s=>observer.observe(s));
+document.querySelectorAll("main > section").forEach(s=>observer.observe(s));
 refreshStatus();setInterval(refreshStatus,5000);

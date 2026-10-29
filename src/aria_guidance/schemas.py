@@ -55,6 +55,11 @@ class PlanV1(Window):
     live: bool = True
 
 
+class Review(StrictModel):
+    verdict: Literal["success", "fail"] | None = None
+    notes: str = Field(default="", max_length=10_000)
+
+
 class Feedback(StrictModel):
     event: Literal["done", "next", "feedback", "cancel", "confirm"]
     text: str = Field(default="", max_length=1500)
