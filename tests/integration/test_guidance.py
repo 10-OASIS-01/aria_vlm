@@ -129,6 +129,7 @@ def test_web_console_drives_the_node(node, camera, backend, probe):
     # tools/fake_camera.py, not the glasses: the console and the trial both say so.
     assert state["camera"]["source"] == "fake" and 4 <= state["camera"]["hz"] <= 6
     assert state["camera"]["age_s"] < 1.5
+    assert state["camera"]["window_s"] >= 9.5  # The prefilled 10 s window.
     trial = web.get(f"/api/trials/{state['trial']['session']}/{state['trial']['id']}").json()
     assert trial["trial"]["camera"] == "fake"
     web.post("/api/live/command", json={"kind": "note", "text": "from the console"})
@@ -139,3 +140,13 @@ def test_web_console_drives_the_node(node, camera, backend, probe):
     web.post("/api/live/command", json={"kind": "talk", "text": "off"})
     wait_for(lambda: web.get("/api/live/state").json().get("state") == "silence")
     web.close()
+
+
+def test_operator_finishes_without_a_completion_proposal(probe, node, camera, backend, tmp_path):
+    probe.publish("/guidance/goal", "Pick up the pen")
+    heard(probe, node, 1)
+    probe.publish("/guidance/reply", "finish")
+    assert heard(probe, node, 2) == "Task complete."
+    [(trial, events, _)] = trials(tmp_path)
+    assert trial["outcome"] == "completed"
+    assert [e["text"] for e in events if e["kind"] == "reply"] == ["finish"]

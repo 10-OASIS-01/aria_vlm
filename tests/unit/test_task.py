@@ -101,3 +101,18 @@ def test_reply_without_task():
     assert parse_reply("Pick up the pen", task) == ("goal", "Pick up the pen")
     assert parse_reply("next", task)[0] == "none"
     assert parse_reply("  ", task)[0] == "none"
+
+
+def test_finish_closes_any_active_task_and_drops_a_plan_in_flight():
+    task = planned()
+    assert parse_reply("Finish.", task) == ("finish", "Finish.")
+    assert task.finish() and task.state == "completed" and not task.active
+    assert not task.finish()
+    task.start("Stack the cups")
+    epoch, _, _ = task.begin_plan()
+    assert task.finish()
+    assert not task.finish_plan(epoch, {"status": "instruction", "instruction": "Go."})
+
+
+def test_finish_without_a_task_is_nothing():
+    assert parse_reply("finish", Task())[0] == "none"

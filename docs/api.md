@@ -42,6 +42,8 @@ client.close()
 | GET | `/api/live/state?after=&wait=` | The console long-polls the state; adds `version` and `node_online` |
 | GET | `/api/live/preview.jpg` | Newest preview; 404 while the node is offline |
 | POST | `/api/live/command` | `{kind: goal\|reply\|note\|talk, text}`; 503 while the node is offline |
+| GET | `/api/system` | guidance_node, glasses and test camera: state, exit code, start time, log tail when failed |
+| POST | `/api/system/{name}/{start\|stop}` | Starts or stops one of those three; nothing else can be run |
 | GET | `/api/trials` | Trial summaries from `ARIA_SESSIONS_DIR` and `.runtime/guidance`, newest first |
 | GET | `/api/trials/{session}/{trial}` | `trial.json`, events, review, frame count and the first frame's time |
 | GET | `/api/trials/{session}/{trial}/video.mp4` | Frames as H.264, timed by capture stamps; cached once the trial closes |

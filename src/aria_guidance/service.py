@@ -28,6 +28,7 @@ from .schemas import (
     SessionCreate,
 )
 from .store import Conflict, Store
+from .system import ProcessManager, ros_services
 from .trial import (
     find_trial,
     list_trials,
@@ -81,7 +82,7 @@ class RequestGuard:
         await self.app(scope, replay, send)
 
 
-def create_app(settings=None, engine=None, load_model=True):
+def create_app(settings=None, engine=None, load_model=True, system=None):
     settings = settings or Settings()
     store = Store(settings.data_dir)
     engine = engine or QwenEngine(settings)
@@ -94,6 +95,11 @@ def create_app(settings=None, engine=None, load_model=True):
     reports.mkdir(exist_ok=True)
     trial_roots = [settings.sessions_dir, settings.data_dir / "guidance"]
     live = LiveRelay()
+    system = system or ProcessManager(
+        ros_services(settings, Path(__file__).resolve().parents[2]),
+        settings.data_dir / "run",
+        settings.data_dir / "logs",
+    )
 
     @asynccontextmanager
     async def lifespan(app):
@@ -367,6 +373,18 @@ def create_app(settings=None, engine=None, load_model=True):
             raise HTTPException(503, "guidance_node is not connected to this backend")
         await live.add_command(body.model_dump())
         return {"queued": True}
+
+    @app.get("/api/system")
+    def system_status():
+        return system.status()
+
+    @app.post("/api/system/{name}/{action}")
+    def system_action(name: str, action: str):
+        """Starts or stops one of the fixed ROS processes; nothing else can be run."""
+        if action not in {"start", "stop"} or name not in system.services:
+            raise HTTPException(404, "Unknown process or action")
+        getattr(system, action)(name)
+        return system.status()
 
     @app.get("/api/trials")
     def trials():

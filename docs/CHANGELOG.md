@@ -2,6 +2,32 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-29 — Run a session from the console, step buttons, walkthrough (commit "Run a whole session from the console, with a walkthrough")
+
+From a second design critique, on the first-time workflow (24/40).
+
+**Added**
+- **System row in Live.** It starts and stops guidance_node, and switches the camera between Glasses, Test camera and Off.
+  - The backend runs three fixed commands (`aria_guidance/system.py`), each in its own process group with aria2_ros2's environment, logging to `.runtime/logs/`.
+  - Pid files let a restarted backend find the processes again.
+  - Stop sends Ctrl-C to the group, then SIGKILL after 15 s.
+  - Settings: `ARIA_ROS_WORKSPACE`, `ARIA_FASTDDS_PROFILE`, `ARIA_FAKE_IMAGE`.
+- **Walkthrough** (top bar; offered on first visit). One practice trial on the test camera in 7 steps. Each step points at the real control and advances when the real state changes; it never presses anything itself.
+- **Finish task.** `Task.finish()`, and "finish" as a typed or spoken reply, close a trial as completed without waiting for the model to propose it. A plan still running is dropped.
+- The node reports `camera.window_s`, the seconds of camera buffered, so the band counts toward the 10 s the model needs.
+- Trial detail carries `folder`.
+
+**Changed behavior**
+- Live buttons follow the workflow.
+  - While acting: **Done with step** (D) and **Need help** (H). Need help sends "I need more help with this step."
+  - When the model proposes completion: **Yes, finish** (F) and **Not yet** (N).
+  - Next is gone.
+  - The button the band asks for is the dark one.
+- The band covers a model question ("Answer the question"), a missing camera ("No camera") and the warm-up countdown. It uses plain words: "Guidance stopped", not "Node offline".
+- Keys act only when focus is not on a control, so Space presses a focused button instead of starting push-to-talk. The camera switch takes arrow keys.
+- A failed process shows one line of cause, a log disclosure and a Dismiss button, instead of a traceback.
+- Setup (was Connect) describes the one-time setup. Trials explains each outcome on hover and counts real trials to review.
+
 ## 2026-10-29 — Cleaner console, captions (commit "Make the console a set of views, add captions and camera strip")
 
 From a dual-agent design critique (23/40); see `.impeccable/critique/`.

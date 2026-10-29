@@ -14,12 +14,12 @@
     <a href="#live"><span>●</span> Live</a>
     <a href="#trials"><span>▤</span> Trials</a>
     <a href="#workbench"><span>▷</span> Try a task</a>
-    <a href="#connect"><span>⇄</span> Connect Aria</a>
+    <a href="#connect"><span>⇄</span> Setup</a>
   </nav>
   <div class="sidebar-bottom"><span class="tiny-dot"></span> MVP · October 2026<p>Observe the world.<br>Guide the next step.</p></div>
 </aside>
 <main>
-  <header class="topbar"><div>Workspace <span>/</span> <strong>Aria MVP</strong></div><div class="topbar-right"><span id="service-badge" class="badge">Connecting</span><button class="text-button" id="token-button" hidden>API token</button></div></header>
+  <header class="topbar"><div><strong>Aria guidance console</strong></div><div class="topbar-right"><button class="text-button" type="button" id="tour-button">Walkthrough</button><span id="service-badge" class="badge">Connecting</span><button class="text-button" id="token-button" hidden>API token</button></div></header>
   <section id="workbench">
     <div class="heading-row"><div><h2>Try a task</h2><p>Upload a short camera clip and ask for the next step.</p></div><span class="badge subtle">Real model inference</span></div>
     <div class="workbench-grid">
@@ -37,21 +37,29 @@
 
   <section id="live" aria-labelledby="live-title">
     <h2 id="live-title" class="sr">Live</h2>
+    <div class="tour-offer" id="tour-offer" hidden><p><strong>New here?</strong> The walkthrough runs one practice trial on the test camera, about 3 minutes.</p><button type="button" class="button dark" id="tour-start">Start walkthrough</button><button type="button" class="text-button" id="tour-later">Not now</button></div>
     <div class="live-band" id="live-band" data-tone="off" role="status" aria-live="polite">
       <div><strong id="live-label">Connecting</strong><span id="live-detail">Waiting for guidance_node.</span></div>
       <span class="live-link" id="live-node"><span class="dot" aria-hidden="true"></span><span id="live-node-text">Connecting</span></span>
     </div>
+    <div class="system" aria-label="Processes on this machine">
+      <div class="system-item"><span class="sys-dot" id="sys-guidance-dot" data-state="stopped" aria-hidden="true"></span><strong title="guidance_node: links the camera, the model and the glasses">Guidance</strong><span class="system-state" id="sys-guidance-state">Stopped</span><button type="button" class="button light" id="sys-guidance">Start</button></div>
+      <div class="system-item"><span class="sys-dot" id="sys-camera-dot" data-state="stopped" aria-hidden="true"></span><strong id="sys-camera-label">Camera</strong><div class="segmented" role="radiogroup" aria-labelledby="sys-camera-label"><button type="button" role="radio" data-camera="glasses" aria-checked="false">Glasses</button><button type="button" role="radio" data-camera="test_camera" aria-checked="false">Test camera</button><button type="button" role="radio" data-camera="off" aria-checked="true">Off</button></div><span class="system-state" id="sys-camera-state"></span></div>
+      <p class="system-hint" id="sys-camera-hint"></p>
+      <div class="system-errors" id="system-errors" hidden></div>
+    </div>
     <div class="live-grid">
       <div class="live-main">
-        <article class="card live-now">
+        <article class="card live-now" id="live-now">
           <p class="live-goal"><span>Goal</span><strong id="live-goal-text">No goal set</strong></p>
-          <p class="live-kicker">Instruction</p>
+          <p class="live-kicker" id="live-kicker">Instruction</p>
           <p class="live-instruction" id="live-instruction">No instruction yet.</p>
         </article>
         <div class="card live-controls">
-          <div class="live-primary"><button type="button" class="button dark live-big" id="live-done" aria-keyshortcuts="D">Done <kbd>D</kbd></button><button type="button" class="button light live-big" id="live-next" aria-keyshortcuts="N">Next <kbd>N</kbd></button></div>
-          <button type="button" class="live-talk" id="live-talk" aria-keyshortcuts="Space"><span id="live-talk-text">Hold to talk</span> <kbd>Space</kbd></button>
-          <div class="live-secondary"><button type="button" class="button light" id="live-repeat" aria-keyshortcuts="R">Repeat <kbd>R</kbd></button><button type="button" class="button light" id="live-newgoal" aria-expanded="false" aria-controls="live-goal-form">New goal</button></div>
+          <div class="live-primary" id="live-step-actions"><button type="button" class="button dark live-big" id="live-done" aria-keyshortcuts="D">Done with step <kbd>D</kbd></button><button type="button" class="button light live-big" id="live-help" aria-keyshortcuts="H">Need help <kbd>H</kbd></button></div>
+          <div class="live-primary" id="live-confirm-actions" hidden><button type="button" class="button dark live-big" id="live-yes" aria-keyshortcuts="F">Yes, finish <kbd>F</kbd></button><button type="button" class="button light live-big" id="live-notyet" aria-keyshortcuts="N">Not yet <kbd>N</kbd></button></div>
+          <div class="live-talk-group"><button type="button" class="live-talk" id="live-talk" aria-keyshortcuts="Space" aria-describedby="live-talk-hint"><span id="live-talk-text">Hold to talk</span> <kbd>Space</kbd></button><p class="live-hint" id="live-talk-hint"></p></div>
+          <div class="live-secondary"><button type="button" class="button light" id="live-repeat" aria-keyshortcuts="R">Repeat <kbd>R</kbd></button><button type="button" class="button light" id="live-newgoal" aria-expanded="false" aria-controls="live-goal-form">New goal</button><button type="button" class="button light" id="live-finish" aria-keyshortcuts="F">Finish task <kbd>F</kbd></button></div>
           <form class="live-form" id="live-goal-form"><label for="live-goal">Goal for the wearer</label><textarea id="live-goal" rows="2" minlength="3" maxlength="1500" required placeholder="Type a goal for the wearer"></textarea><div class="live-inline"><button type="submit" class="button dark" id="live-goal-submit">Set goal</button><button type="button" class="text-button" id="live-goal-close" hidden>Keep current goal</button></div></form>
           <form class="live-form" id="live-note-form"><label for="live-note">Note for this trial</label><div class="live-inline"><input id="live-note" maxlength="1500" required placeholder="Something worth remembering"><button type="submit" class="button light">Add note</button></div></form>
           <dl class="live-facts"><div><dt>Heard</dt><dd id="live-heard">Nothing yet</dd></div><div><dt>Trial</dt><dd id="live-trial">None yet</dd></div></dl>
@@ -60,7 +68,7 @@
       </div>
       <article class="card live-view">
         <div class="live-camera" id="live-camera" data-source="none" data-health="none"><strong id="live-camera-source">No camera</strong><span id="live-camera-rate"></span></div>
-        <div class="live-preview"><img id="live-preview" alt="Camera view, as sent to the model" hidden><p id="live-nopreview">No camera view yet. It appears once guidance_node receives frames.</p></div>
+        <div class="live-preview"><img id="live-preview" alt="Camera view, as sent to the model" hidden><p id="live-nopreview">No camera view yet. It appears once a camera is running.</p></div>
       </article>
     </div>
   </section>
@@ -73,13 +81,13 @@
         <div class="trial-placeholder" id="trial-placeholder"><h3>No trial selected</h3><p>Pick a trial on the left. Trials appear here once guidance_node receives a goal.</p></div>
         <div id="trial-view" hidden>
           <div class="trial-head"><h3 id="trial-goal"></h3><span class="trial-tags"><span class="badge test" id="trial-test" hidden>Test camera</span><a class="badge" id="trial-outcome"></a></span></div>
-          <p class="trial-meta" id="trial-meta"></p>
+          <p class="trial-meta" id="trial-meta"></p><p class="trial-meta trial-folder" id="trial-folder"></p>
           <div class="trial-media"><video id="trial-video" controls preload="metadata" playsinline crossorigin="anonymous" aria-label="Trial video, with captions of what was said"></video><p class="trial-novideo" id="trial-novideo" hidden>No camera frames were recorded for this trial.</p></div>
           <div class="trial-columns">
             <section class="trial-review" aria-labelledby="review-title">
               <h4 id="review-title">Verdict</h4>
               <div class="verdict" role="group" aria-label="Verdict"><button type="button" class="verdict-button" data-verdict="success" aria-pressed="false">✓ Success</button><button type="button" class="verdict-button" data-verdict="fail" aria-pressed="false">✗ Fail</button></div>
-              <label for="trial-notes">Review notes</label>
+              <label for="trial-notes">Review notes <small>Saves when you leave the field</small></label>
               <textarea id="trial-notes" rows="5" maxlength="10000" placeholder="What went well, what went wrong, anything to rerun."></textarea>
               <p class="review-status" id="review-status" role="status"></p>
             </section>
@@ -90,12 +98,13 @@
     </div>
   </section>
 
-  <section id="connect">
-    <div class="heading-row"><div><h2>Connect the glasses</h2><p>Run the bridge beside the existing Aria ROS 2 infrastructure.</p></div><a href="api/download/README.md" class="button light">Read the deployment guide ↗</a></div>
-    <div class="connect-grid"><article class="card connect-card"><span class="connect-number">1</span><h3>Start the backend</h3><p>Install the model dependencies, set <code>ARIA_MODEL_PATH</code>, then start one service process on a GPU workstation.</p><code class="command">bash scripts/service.sh start</code></article><article class="card connect-card"><span class="connect-number">2</span><h3>Join aria2_ros2</h3><p>Build aria_guidance_ros in the ROS 2 Humble workspace. Use the same domain as the Aria node and set the backend URL.</p><code class="command">ros2 launch aria_guidance_ros guidance.launch.py</code></article><article class="card connect-card"><span class="connect-number">3</span><h3>Give a goal, then act</h3><p>Type a goal or use push-to-talk. guidance_node samples the camera and publishes the next instruction to <code>/aria/tts</code>.</p><code class="command">/guidance/goal · /guidance/reply</code></article></div>
+  <section id="connect" aria-labelledby="setup-title">
+    <div class="heading-row"><div><h2 id="setup-title">Set up once</h2><p>What this machine needs before the console can run trials. Day to day, everything starts from Live.</p></div></div>
+    <div class="connect-grid"><article class="card connect-card"><span class="connect-number">1</span><h3>Start the console</h3><p>On the GPU machine. The model loads in about 10 s; then open this page. It keeps running in tmux until you stop it.</p><code class="command">bash aria_vlm/scripts/service.sh start</code></article><article class="card connect-card"><span class="connect-number">2</span><h3>Pair the glasses</h3><p>Once per pair: device certificates and USB or Wi-Fi setup, as in the aria2_ros2 README. This should list the glasses:</p><code class="command">ros2 run aria_ros2 aria_device info</code></article><article class="card connect-card"><span class="connect-number">3</span><h3>Point the console at ROS</h3><p>In <code>aria_vlm/.env</code>: where aria2_ros2 lives, its Fast DDS profile (large buffers, or frames drop), and the photo the test camera plays.</p><code class="command">ARIA_ROS_WORKSPACE · ARIA_FASTDDS_PROFILE · ARIA_FAKE_IMAGE</code></article></div>
     <div class="topic-table card"><table><thead><tr><th>Aria node</th><th>Existing ROS topic</th><th>Purpose</th></tr></thead><tbody><tr><td><span class="table-tag">PUBLISHES</span></td><td><code>/aria/rgb/image_raw</code></td><td>Vision: RGB with sensor-data QoS</td></tr><tr><td><span class="table-tag">PUBLISHES</span></td><td><code>/aria/gaze</code></td><td>Gaze: available, unused by the MVP planner</td></tr><tr><td><span class="table-tag">PUBLISHES</span></td><td><code>/aria/audio</code></td><td>Microphone: interleaved int32 samples</td></tr><tr><td><span class="table-tag">SUBSCRIBES</span></td><td><code>/aria/tts</code></td><td>Text for onboard speech</td></tr></tbody></table><p class="form-note">The /guidance controls belong to guidance_node. No changes to the Aria node are required.</p></div>
   </section>
   <footer>Aria Visual Guidance <span>Qwen3.5-9B · Project Aria Gen2 · ROS 2 Humble</span><a href="https://github.com/sparklabutah/aria2_ros2" target="_blank" rel="noreferrer">aria2_ros2 ↗</a></footer>
 </main>
 <div id="toast" class="toast" role="status" hidden></div>
+<aside class="tour" id="tour" hidden aria-labelledby="tour-title" aria-live="polite"><h3 id="tour-title"></h3><p id="tour-text"></p><div class="tour-foot"><span id="tour-count"></span><button type="button" class="text-button" id="tour-skip">Skip step</button><button type="button" class="text-button" id="tour-exit">Exit</button></div></aside>
 </body></html>

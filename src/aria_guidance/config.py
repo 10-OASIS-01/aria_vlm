@@ -22,6 +22,12 @@ class Settings:
     sessions_dir: Path = field(
         default_factory=lambda: Path(os.getenv("ARIA_SESSIONS_DIR", "../aria2_ros2/data/aria"))
     )
+    # What the console's System row starts: aria2_ros2's workspace, its DDS profile, the test image.
+    ros_workspace: Path = field(
+        default_factory=lambda: Path(os.getenv("ARIA_ROS_WORKSPACE", "../aria2_ros2"))
+    )
+    fastdds_profile: str = field(default_factory=lambda: os.getenv("ARIA_FASTDDS_PROFILE", ""))
+    fake_image: str = field(default_factory=lambda: os.getenv("ARIA_FAKE_IMAGE", ""))
     max_new_tokens: int = 96
     asr_model_path: str = field(default_factory=lambda: os.getenv("ARIA_ASR_MODEL_PATH", ""))
     api_token: str = field(default_factory=lambda: os.getenv("ARIA_API_TOKEN", ""))
@@ -37,3 +43,4 @@ class Settings:
             raise ValueError("ARIA_MAX_FRAME_AGE_MS must be 0 (disabled) or positive")
         self.data_dir = self.data_dir.expanduser().resolve()
         self.sessions_dir = self.sessions_dir.expanduser().resolve()
+        self.ros_workspace = self.ros_workspace.expanduser().resolve()

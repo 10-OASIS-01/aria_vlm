@@ -187,14 +187,14 @@ For a backend behind a prefix, pass the complete base URL, for example `backend_
 
 ### Operator console
 
-Open the workbench at `http://<backend>:8785/`. It opens on **Live**; the sidebar switches between Live, Trials, Try a task and Connect. guidance_node connects to the backend it already uses for planning and relays its state, the 640 px camera preview and your commands, so the console works from any machine that can reach the backend.
+Start the backend once (`bash scripts/service.sh start`) and open `http://<backend>:8785/`. Everything else runs from the **Live** view; **Walkthrough** in the top bar runs one practice trial on the test camera and points at each control as you use it.
 
-- The band states the one thing to do now (Observing, Thinking, Act then say done, Confirm, Not spoken: press Repeat, Listening), with the reason beside it.
-- The goal and the current instruction sit under it. The camera strip names the source: **Aria glasses**, or **TEST CAMERA · not the glasses** for `tools/fake_camera.py`, with frame rate and age. The preview dims when frames are late.
-- Done and Next (keys D and N), Hold to talk (or hold Space), Repeat (R) and New goal. Replacing a running goal and Cancel task each need a second press within 4 s.
-- Keys work only in the Live view and never while typing.
+1. **System row.** Start **Guidance** (guidance_node) and choose a **Camera**: Glasses (aria_node, Rerun viewer off), Test camera (`tools/fake_camera.py` playing `ARIA_FAKE_IMAGE`) or Off. Glasses and Test camera exclude each other. A process that fails shows its cause in one line, with the log one click away. The processes are fixed commands from `aria_guidance/system.py`; they log to `.runtime/logs/` and keep running across a backend restart.
+2. **Goal.** The band counts the 10 s of camera the model needs; the goal can be typed meanwhile (Enter sends it).
+3. **Each instruction.** **Done with step** (D) when the wearer has done it, **Need help** (H) when they are stuck; the model plans again either way. **Hold to talk** (Space) records the glasses' microphone.
+4. **Finish.** **Finish task** (F, pressed twice) closes the trial as completed at any time. When the model thinks the goal is reached, the band asks **Finished?**: Yes, finish (F) or Not yet (N).
 
-Commands are refused while guidance_node is not connected, so a stale "done" never fires later. Rerun (`viewer.enable` in aria_node) stays the device-debug viewer; keep it off during trials.
+The band always states the one thing to do now, and the button it asks for is the dark one. The camera strip names the source: Aria glasses, or TEST CAMERA, with frame rate and age. Keys work only in the Live view, never while typing or on a focused control. Replacing a running goal, Cancel task and stopping Guidance mid-task each need a second press. Commands are refused while guidance_node is not connected.
 
 ### From a terminal
 
@@ -254,10 +254,12 @@ Start recording, speak normally, then stop recording. No wake word or special ph
 | Say | When | Effect |
 | --- | --- | --- |
 | A goal in plain words, e.g. "Pick up the black marker on the table" | No active task | Becomes the goal |
-| `next` or `done` | Task active | Requests the next step |
+| `done` or `next` | Task active | Requests the next step |
+| `help`, or what is wrong | Task active | Sent as feedback; the model rephrases or breaks the step down |
 | `done` or `yes` | After "The task looks complete. Say done to confirm, or next to continue." | Confirms and closes the task |
 | `next`, or what is still missing | After that same prompt | The task continues with a new step |
 | `repeat` | Task active | Speaks the last instruction again |
+| `finish` | Task active | Closes the trial as completed |
 | `cancel` or `stop` | Any time | Ends the task |
 | `goal: ...` | Task active | Replaces the goal |
 | `note: ...` | Any time | Saved as a note in the trial record |

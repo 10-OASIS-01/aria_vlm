@@ -171,6 +171,8 @@ class GuidanceNode(Node):
             self.repeat()
         elif command == "confirm":
             self.confirm()
+        elif command == "finish":
+            self.finish()
         elif command == "feedback":
             if self.task.feedback(text):
                 self.record("reply", text=text)
@@ -207,11 +209,18 @@ class GuidanceNode(Node):
 
     def confirm(self):
         if self.task.confirm():
-            self.record("reply", text="confirm")
-            self.publish_tts("Task complete.")
-            self.record("tts", text="Task complete.", repeat=False)
-            self.status("completed", "Goal confirmed; set a new goal to continue")
-            self.trial.close("completed")
+            self.complete("confirm")
+
+    def finish(self):
+        if self.task.finish():
+            self.complete("finish")
+
+    def complete(self, reply):
+        self.record("reply", text=reply)
+        self.publish_tts("Task complete.")
+        self.record("tts", text="Task complete.", repeat=False)
+        self.status("completed", "Goal reached; set a new goal to continue")
+        self.trial.close("completed")
 
     def plan_if_ready(self):
         """Starts a plan when the task wants one, nothing else is running and frames are fresh."""
@@ -288,11 +297,16 @@ class GuidanceNode(Node):
 
     def camera_info(self):
         """Which camera feeds the node, its rate over the last ~3 s, and its newest frame's age."""
-        frames = list(self.frames.frames)[-16:]
+        window = list(self.frames.frames)
+        frames = window[-16:]
         if not frames:
-            return {"source": None, "frame_id": None, "hz": 0.0, "age_s": None}
+            return {"source": None, "frame_id": None, "hz": 0.0, "age_s": None, "window_s": 0.0}
         span_ms = frames[-1].timestamp_ms - frames[0].timestamp_ms
         return {
+            # Seconds of camera buffered; planning needs about 10 s.
+            "window_s": round(
+                min(window[-1].timestamp_ms - window[0].timestamp_ms, 10_000) / 1000, 1
+            ),
             "source": CAMERA_SOURCES.get(self.camera_frame, self.camera_frame),
             "frame_id": self.camera_frame,
             "hz": round((len(frames) - 1) * 1000 / span_ms, 1) if span_ms else 0.0,

@@ -195,6 +195,7 @@ def read_trial(folder):
             **read_json(folder / "trial.json", {}),
             "session": folder.parents[1].name,
             "active": is_active(folder),
+            "folder": str(folder),
         },
         "events": events,
         "review": read_json(folder / "review.json", {"verdict": None, "notes": ""}),

@@ -1,7 +1,8 @@
 """One guidance task: goal, dialogue history and step state. No ROS, no HTTP.
 
 States: idle -> ready (a plan is wanted) -> planning -> awaiting_feedback or awaiting_confirmation.
-Feedback returns to ready; confirm closes as completed; cancel closes as cancelled. A failed plan
+Feedback returns to ready; confirm (after a completion proposal) or finish (any time, by the
+operator) closes as completed; cancel closes as cancelled. A failed plan
 moves to error, and the next reply plans again. Not thread-safe: the node calls it from one thread.
 """
 
@@ -9,6 +10,7 @@ CONFIRM_WORDS = {"done", "yes", "confirm", "完成", "好了", "是"}
 NEXT_WORDS = {"next", "done", "完成", "下一步", "好了"}
 CANCEL_WORDS = {"cancel", "stop", "停止", "取消"}
 REPEAT_WORDS = {"repeat", "重复", "再说一遍"}
+FINISH_WORDS = {"finish", "finished", "finish task", "task finished", "结束"}
 # Saying so explicitly stops the model from repeating DONE (a bare "Next." did not, in replay).
 REJECTION = "No, the goal is not complete yet. "
 MAX_HISTORY = 24
@@ -22,7 +24,7 @@ def parse_reply(text, task):
         task: the current Task, for the words whose meaning depends on its state.
 
     Returns:
-        (command, text): command is goal, note, cancel, repeat, confirm, feedback or none.
+        (command, text): command is goal, note, cancel, repeat, finish, confirm, feedback or none.
     """
     text = text.strip()
     word = text.lower().rstrip(".!?。！？")
@@ -30,13 +32,15 @@ def parse_reply(text, task):
         return "cancel", text
     if word in REPEAT_WORDS:
         return "repeat", text
+    if word in FINISH_WORDS and task.active:
+        return "finish", text
     for prefix in ("goal", "note"):
         if word.startswith(prefix + ":"):
             return prefix, text[len(prefix) + 1 :].strip()
     if word in CONFIRM_WORDS and task.state == "awaiting_confirmation":
         return "confirm", text
-    if not text or (word in NEXT_WORDS and not task.active):
-        return "none", text  # "next" without a task is not a goal.
+    if not text or (word in NEXT_WORDS | FINISH_WORDS and not task.active):
+        return "none", text  # "next" or "finish" without a task is not a goal.
     return ("feedback", text) if task.active else ("goal", text)
 
 
@@ -92,6 +96,14 @@ class Task:
     def confirm(self):
         if self.state != "awaiting_confirmation":
             return False
+        self.state = "completed"
+        return True
+
+    def finish(self):
+        """The operator declares the goal reached, with or without a proposal from the model."""
+        if not self.active:
+            return False
+        self.epoch += 1  # A plan still running must not speak after the task closed.
         self.state = "completed"
         return True
 
