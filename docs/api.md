@@ -52,7 +52,7 @@ Write requests require `Authorization: Bearer TOKEN` only when `ARIA_API_TOKEN` 
 - Each frame contains `timestamp_ms` and base64 JPEG/PNG data. JPEG/PNG data URLs are also accepted.
 - No HTTP image URLs or server-side file paths are accepted.
 - Each encoded image is at most 2 MiB; decoded bytes are limited to 1.5 MiB and 16 megapixels. The complete HTTP request is limited to 24 MiB.
-- For `source="aria"` or `"webcam"`, timestamps are Unix epoch milliseconds; the newest capture must be no more than five seconds old or three seconds into the future when received.
+- For `source="aria"` or `"webcam"`, timestamps are Unix epoch milliseconds; the newest capture must be no more than `ARIA_MAX_FRAME_AGE_MS` old (default 5000) or three seconds into the future when received. The 422 response states the measured age. `ARIA_MAX_FRAME_AGE_MS=0` disables the check.
 - For `source="replay"`, timestamps may be relative to the recording. Replay mode is identified in the session and must not be counted as live hardware evidence.
 
 The ROS bridge samples a bounded buffer. It requires a sufficiently complete window and rejects stale, duplicated or badly gapped captures. Images are JPEG encoded at a maximum edge of 640 pixels before transmission; Qwen's processor applies the configured pixel budget. With `ARIA_INPUT_MODE=video` (the default), the backend passes the 20 frames to the model as one 2 fps video. The `<t seconds>` timestamps the processor inserts come from that nominal rate, not from the client's capture times; the gap limits above keep the actual spacing close to it.

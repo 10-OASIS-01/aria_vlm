@@ -39,7 +39,7 @@ class PlannerBridge(Node):
             "request_timeout_seconds": 120.0,
             "image_interval_ms": 200.0,
             "max_audio_seconds": 20.0,
-            "audio_gain": 1.0,
+            "audio_gain": 16.0,
         }
         for name, default in defaults.items():
             self.declare_parameter(name, default)
@@ -229,6 +229,10 @@ class PlannerBridge(Node):
             with self.lock:
                 if epoch != self.epoch:
                     return
+                # The backend is now ready, even if this plan fails: a pending completion
+                # proposal was rejected, so a later "done" must not send confirm (409).
+                if not initial:
+                    session["state"] = "ready"
             result = self.client.plan(session["id"], [f.payload() for f in frames])
             result["client_roundtrip_ms"] = (time.monotonic() - started) * 1000
             self.messages.put(("plan", epoch, (session, result)))

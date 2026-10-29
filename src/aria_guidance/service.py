@@ -179,13 +179,15 @@ def create_app(settings=None, engine=None, load_model=True):
             raise HTTPException(503, "Model is loading or unavailable; check /api/ready")
         if engine.status().get("busy"):
             raise HTTPException(429, "One inference is already running; retry after it finishes")
-        if session["source"] in {"aria", "webcam"}:
-            pass
-            # age = received_at_ms - body.frames[-1].timestamp_ms
-            # if not -3000 <= age <= 5000:
-            #     raise HTTPException(
-            #         422, "Live frames must be recent; synchronize the client and server clocks"
-            #     )
+        if session["source"] in {"aria", "webcam"} and settings.max_frame_age_ms:
+            age = received_at_ms - body.frames[-1].timestamp_ms
+            if not -3000 <= age <= settings.max_frame_age_ms:
+                raise HTTPException(
+                    422,
+                    f"Newest frame is {age / 1000:.1f} s old (allowed -3.0 to "
+                    f"{settings.max_frame_age_ms / 1000:.1f} s); check the camera stream and "
+                    "synchronize the client and server clocks",
+                )
         try:
             images = await asyncio.to_thread(
                 lambda: [decode_image(f.image_base64) for f in body.frames]
@@ -241,10 +243,10 @@ def create_app(settings=None, engine=None, load_model=True):
             raise HTTPException(429, str(e)) from e
         except Exception as e:
             LOGGER.exception("Planning failed for request %s", rid)
-            store.fail(sid, rid, session["version"], type(e).__name__)
-            raise HTTPException(
-                503, f"Inference failed ({type(e).__name__}); inspect server logs"
-            ) from e
+            # Keep the message: parse_output rejections (leaked reasoning, echoed goal) differ.
+            reason = f"{type(e).__name__}: {e}"[:300]
+            store.fail(sid, rid, session["version"], reason)
+            raise HTTPException(503, f"Inference failed ({reason}); inspect server logs") from e
 
     @app.get("/api/runs/{request_id}/frames/{index}")
     def frame(request_id: UUID, index: int):

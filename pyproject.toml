@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 model = ["torch>=2.6,<3", "torchvision>=0.21,<1", "transformers==5.3.0", "accelerate>=1.10,<2"]
 speech = ["faster-whisper>=1.2,<2"]
+dev = ["pytest>=8"]
 
 [project.scripts]
 aria-guidance = "aria_guidance.cli:main"
@@ -32,3 +33,6 @@ aria_guidance = ["web/*"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -232,9 +232,9 @@ Start recording, speak normally, then stop recording. No wake word or special ph
 
 #### Microphone level
 
-On the Aria Gen 2 glasses tested here, `/aria/audio` carries 8 channels at 16 kHz, with 16-bit samples in the upper half of each int32. After the bridge mixes the channels down, room noise measured about 0.0002 RMS of full scale and normal speech about 0.0006. The backend treats a clip below 0.002 RMS as silence and returns an empty transcript without running ASR. With the default `audio_gain: 1.0`, every recording therefore comes back empty.
+On the Aria Gen 2 glasses tested here, `/aria/audio` carries 8 channels at 16 kHz, with 16-bit samples in the upper half of each int32. After the bridge mixes the channels down, room noise measured about 0.0002 RMS of full scale and normal speech about 0.0006. The backend treats a clip below 0.002 RMS as silence and returns an empty transcript without running ASR. At `audio_gain: 1.0` every recording therefore comes back empty, so the bridge defaults to `audio_gain: 16.0`.
 
-Set `audio_gain: 16.0` in [bridge.yaml](ros2_ws/src/aria_planner_bridge/config/bridge.yaml), or in a copy passed with `config:=...`. The bridge reads the value only at startup, so restart it and confirm:
+Adjust `audio_gain` in [bridge.yaml](ros2_ws/src/aria_planner_bridge/config/bridge.yaml), or in a copy passed with `config:=...`, if a different microphone or room needs it. The bridge reads the value only at startup, so restart it and confirm:
 
 ```bash
 ros2 param get /planner_bridge audio_gain   # Double value is: 16.0
@@ -248,7 +248,7 @@ ros2 param get /planner_bridge audio_gain   # Double value is: 16.0
 | `ModuleNotFoundError: Qwen3_5...` | Use this project's pinned `transformers==5.3.0` in the backend environment. |
 | CUDA out of memory | Select a GPU with more free memory, use one server process, and keep the default frame pixel budget. Stop only processes you own. |
 | Bridge stays on `collecting` | Verify topic names, sensor-data QoS, a continuous camera stream and about ten seconds of observations. Dropped frames are not padded by duplicating images. |
-| Live timestamps rejected | Synchronize the ROS host and GPU workstation clocks. Use Aria's host-time capture stamps; replay requests use relative timestamps. |
+| Live timestamps rejected (422, "Newest frame is N s old") | Synchronize the ROS host and GPU workstation clocks. Use Aria's host-time capture stamps; replay requests use relative timestamps. Ages of several seconds on one machine mean the camera stream is backlogged (for example with the Aria viewer running). `ARIA_MAX_FRAME_AGE_MS` sets the limit (default 5000); `0` disables the check. |
 | No speech recognized (empty transcript, `silence` status) | The clip was below the backend's 0.002 RMS silence cutoff. Aria Gen 2 speech needs about `audio_gain: 16.0`; see [Microphone level](#microphone-level). Also check the ASR model path and that `/aria/audio` is arriving. |
 | No instruction heard | Verify a manual `/aria/tts` message first; inspect `/planner/status` for stale results, speech guard or inference errors. |
 | HTTP 409 | A previous instruction needs feedback, an ID is being reused with changed input, or the task was cancelled. |
