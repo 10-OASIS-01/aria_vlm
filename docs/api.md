@@ -94,7 +94,8 @@ Each plan uses a UUID `request_id`. Retrying the same ID with identical input re
 Output includes:
 
 - `instruction`: text intended for the person.
-- `status`: `instruction`, `clarification` or `done_proposed`. Only the exact model control response `DONE` proposes completion; arbitrary sentences mentioning completion do not. A `done_proposed` result carries the instruction "The task looks complete." and needs a `confirm` feedback event before the session is `completed`.
+- `status`: `instruction`, `clarification` or `done_proposed`. Only the model's `DONE` mode proposes completion; sentences mentioning completion do not. A `done_proposed` result speaks the model's SAY line (or "The task looks complete." without one) and needs a `confirm` feedback event before the session is `completed`.
+- `proposal`: `{mode, evidence, expect}`, never spoken. `mode` is `ACT`, `INSPECT`, `ASK`, `REPLAN` or `DONE`; `evidence` is what the model saw that decided the step, `expect` what should be true after it. Both are empty when the model answered in the old one-line format.
 - `raw_output`: the non-thinking model answer, retained for evaluation.
 - `input_tokens`, `output_tokens`, observation stamps and timing fields.
 - `preview`: a relative URL for the newest saved frame, or null when frame saving is disabled.

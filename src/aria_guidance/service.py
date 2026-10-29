@@ -227,6 +227,7 @@ def create_app(settings=None, engine=None, load_model=True, system=None):
             "status": result.status,
             "instruction": result.instruction,
             "raw_output": result.raw_output,
+            "proposal": result.proposal,
             "input_tokens": result.input_tokens,
             "output_tokens": result.output_tokens,
             "timings": {
@@ -272,6 +273,7 @@ def create_app(settings=None, engine=None, load_model=True, system=None):
                 "status": result.status,
                 "instruction": result.instruction,
                 "raw_output": result.raw_output,
+                "proposal": result.proposal,
                 "model": "Qwen/Qwen3.5-9B",
                 "cached": False,
                 "input_tokens": result.input_tokens,

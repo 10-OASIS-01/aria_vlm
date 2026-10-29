@@ -5,7 +5,9 @@ reuses the 20 frames the backend saved for one plan (<data_dir>/runs/<plan id>/0
 
 Cases file (JSON list):
   {"name": "pens-step2", "goal": "...", "history": [{"role": "user", "text": "Next."}],
-   "frames": "a087a067", "expect": ["instruction"], "mention_all": ["pen"], "mention_any": []}
+   "frames": "a087a067", "expect": ["instruction"], "mention_all": ["pen"], "mention_any": [],
+   "min_words": 0}
+Every case also fails when the answer repeats the last assistant turn word for word.
 
 Example:
   python scripts/replay_eval.py --cases .runtime/eval_cases.json \
@@ -35,8 +37,11 @@ def load_frames(runs: Path, prefix: str) -> list:
 
 def score(case: dict, status: str, text: str) -> bool:
     lowered = text.lower()
+    said = [t["text"] for t in case.get("history", []) if t["role"] == "assistant"]
     return (
         status in case["expect"]
+        and not (said and eng._normalized(text) == eng._normalized(said[-1]))
+        and len(text.split()) >= case.get("min_words", 0)
         and all(word.lower() in lowered for word in case.get("mention_all", []))
         and (not case.get("mention_any") or any(w.lower() in lowered for w in case["mention_any"]))
     )
@@ -98,6 +103,7 @@ def main():
                             text=g.instruction,
                             model_ms=g.timings["model_ms"],
                             input_tokens=g.input_tokens,
+                            proposal=g.proposal,
                         )
                     except ValueError as e:
                         row.update(status="rejected", text=f"{e}: {raw_seen.get('raw', '')}")
@@ -129,6 +135,7 @@ def main():
             f"  {mode:6s} {pixels:>7} {label:8s} {len(rows) - len(failed)}/{len(rows)}  "
             f"{statistics.median(r['model_ms'] for r in timed):>6.0f} ms  "
             f"{statistics.median(r['input_tokens'] for r in timed):>6.0f} tok"
+            + f"  4-line format {sum(bool(r.get('proposal', {}).get('evidence')) for r in rows)}"
             + (f"  failed: {', '.join(failed)}" if failed else "")
         )
     if args.out:

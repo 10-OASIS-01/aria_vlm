@@ -2,6 +2,33 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-29 — Descriptive instructions with a logged proposal (commit "Make Qwen's instructions descriptive and log its proposal")
+
+In today's trials, instructions were about 10 words ("Reach for the black marker on the grey table."). 4 of 7 replans repeated the last instruction word for word, including after "I need more help with this step."
+
+**Changed behavior**
+- The model answers in four lines: `EVIDENCE`, `MODE` (ACT, INSPECT, ASK, REPLAN or DONE), `SAY` and `EXPECT`. Only `SAY` is spoken.
+- `SAY` runs 10 to 40 words. It names the object and where it is from the wearer's view (left, right, ahead, next to a landmark), and says how only when that isn't obvious.
+- The prompt says what replies mean.
+  - "done" or "next": check the scene, then advance or say what is still visible.
+  - A request for help: same step, in smaller motions.
+  - A correction: follow it, with REPLAN if the plan changes.
+  - The model must never repeat its last SAY word for word.
+- DONE speaks the model's SAY line (for example "The orange pen is in the green mug."), followed by the confirm hint. Without a SAY line it still speaks "The task looks complete."
+- The spoken-word limit is 60 (was 45). `max_new_tokens` is 192 (was 96); expect about +1 s per plan.
+- The old one-line answer still parses (mode ACT, ASK or DONE, empty evidence). An unknown mode or a missing SAY line fails the plan.
+
+**Added**
+- `proposal: {mode, evidence, expect}` in `/v1/plan` and session plan responses. guidance_node writes it into `plan_result` in `guidance.jsonl`.
+- `scripts/replay_eval.py`:
+  - every case fails if it repeats the last assistant turn;
+  - optional `min_words`;
+  - the summary counts four-line answers.
+- New replay cases `pens-help` and `pens-done-unchanged`. `.runtime/prompts/one_line.txt` holds the previous prompt for comparison.
+
+**Upgrade notes**
+- Restart the backend; guidance_node needs no rebuild.
+
 ## 2026-10-29 — Run a session from the console, step buttons, walkthrough (commit "Run a whole session from the console, with a walkthrough")
 
 From a second design critique, on the first-time workflow (24/40).

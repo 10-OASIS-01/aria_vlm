@@ -23,7 +23,7 @@ class StubEngine:
             time.sleep(self.delay)
             if isinstance(self.reply, Exception):
                 raise self.reply
-            instruction, status = parse_output(self.reply, goal)
-            return Generation(instruction, status, self.reply, {}, 1, 1)
+            instruction, status, proposal = parse_output(self.reply, goal)
+            return Generation(instruction, status, self.reply, {}, 1, 1, proposal)
         finally:
             self.busy = False
