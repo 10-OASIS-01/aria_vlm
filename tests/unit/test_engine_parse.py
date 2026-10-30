@@ -64,9 +64,26 @@ def test_four_lines_speak_only_say():
     assert text.startswith("Pick up the orange pen on your left") and status == "instruction"
     assert proposal == {
         "mode": "ACT",
+        "check": "",
         "evidence": "The orange pen lies on the white mat, left of the green mug.",
+        "unknown": "",
         "expect": "The orange pen is inside the green mug.",
+        "plan": "",
     }
+
+
+def test_seven_lines_fill_the_proposal():
+    raw = """CHECK: no
+EVIDENCE: The orange pen is still on the mat.
+UNKNOWN: none
+MODE: ACT
+SAY: The orange pen is still on the mat to your left, so drop it into the green mug.
+EXPECT: The orange pen is inside the green mug.
+PLAN: Put the blue pen on the iPad; none left after that"""
+    text, status, proposal = parse_output(raw, GOAL)
+    assert text.startswith("The orange pen is still") and status == "instruction"
+    assert proposal["check"] == "no" and proposal["unknown"] == "none"
+    assert proposal["plan"] == "Put the blue pen on the iPad; none left after that"
 
 
 @pytest.mark.parametrize(
@@ -75,8 +92,8 @@ def test_four_lines_speak_only_say():
 )
 def test_modes_map_to_status(mode, status):
     raw = f"EVIDENCE: Rack is hidden.\nMODE: {mode}\nSAY: Is the lower rack full?\nEXPECT: -"
-    proposal = {"mode": mode, "evidence": "Rack is hidden.", "expect": "-"}
-    assert parse_output(raw, GOAL)[1:] == (status, proposal)
+    assert parse_output(raw, GOAL)[1] == status
+    assert parse_output(raw, GOAL)[2]["mode"] == mode
 
 
 def test_markdown_tags_and_lowercase_mode_are_read():
@@ -104,4 +121,4 @@ def test_bad_four_lines_are_rejected(raw, message):
 
 def test_one_line_answer_has_no_evidence():
     proposal = parse_output("Pick up the pen.", GOAL)[2]
-    assert proposal == {"mode": "ACT", "evidence": "", "expect": ""}
+    assert proposal["mode"] == "ACT" and not any(v for k, v in proposal.items() if k != "mode")

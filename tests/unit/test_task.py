@@ -116,3 +116,13 @@ def test_finish_closes_any_active_task_and_drops_a_plan_in_flight():
 
 def test_finish_without_a_task_is_nothing():
     assert parse_reply("finish", Task())[0] == "none"
+
+
+def test_history_keeps_the_whole_answer_for_the_next_plan():
+    task = Task()
+    task.start("Tidy up.")
+    epoch = task.begin_plan()[0]
+    raw = "MODE: ACT\nSAY: Go.\nEXPECT: Gone."
+    task.finish_plan(epoch, {"status": "instruction", "instruction": "Go.", "raw_output": raw})
+    assert task.history[-1] == {"role": "assistant", "text": raw}
+    assert task.last["instruction"] == "Go."

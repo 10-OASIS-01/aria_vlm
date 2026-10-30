@@ -29,7 +29,7 @@ class Settings:
     fastdds_profile: str = field(default_factory=lambda: os.getenv("ARIA_FASTDDS_PROFILE", ""))
     fake_image: str = field(default_factory=lambda: os.getenv("ARIA_FAKE_IMAGE", ""))
     # Four lines (EVIDENCE, MODE, SAY, EXPECT) run about 100 tokens.
-    max_new_tokens: int = 192
+    max_new_tokens: int = 256
     asr_model_path: str = field(default_factory=lambda: os.getenv("ARIA_ASR_MODEL_PATH", ""))
     api_token: str = field(default_factory=lambda: os.getenv("ARIA_API_TOKEN", ""))
     save_frames: bool = field(default_factory=lambda: os.getenv("ARIA_SAVE_FRAMES", "1") == "1")

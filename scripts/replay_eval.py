@@ -6,8 +6,8 @@ reuses the 20 frames the backend saved for one plan (<data_dir>/runs/<plan id>/0
 Cases file (JSON list):
   {"name": "pens-step2", "goal": "...", "history": [{"role": "user", "text": "Next."}],
    "frames": "a087a067", "expect": ["instruction"], "mention_all": ["pen"], "mention_any": [],
-   "min_words": 0}
-Every case also fails when the answer repeats the last assistant turn word for word.
+   "min_words": 0, "expect_mode": ["ACT"], "expect_check": ["yes"], "plan_excludes": ["ipad"]}
+Every case also fails when the answer repeats the SAY of the last assistant turn word for word.
 
 Example:
   python scripts/replay_eval.py --cases .runtime/eval_cases.json \
@@ -35,12 +35,18 @@ def load_frames(runs: Path, prefix: str) -> list:
     return [Image.open(p).convert("RGB") for p in paths]
 
 
-def score(case: dict, status: str, text: str) -> bool:
+def score(case: dict, status: str, text: str, proposal: dict) -> bool:
     lowered = text.lower()
     said = [t["text"] for t in case.get("history", []) if t["role"] == "assistant"]
+    last_say = eng.parse_output(said[-1])[0] if said else ""
+    check = eng._normalized(proposal.get("check", "")).split(" ")[0]
+    plan = proposal.get("plan", "").lower()
     return (
         status in case["expect"]
-        and not (said and eng._normalized(text) == eng._normalized(said[-1]))
+        and eng._normalized(text) != eng._normalized(last_say)
+        and proposal.get("mode") in case.get("expect_mode", [proposal.get("mode")])
+        and check in case.get("expect_check", [check])
+        and not any(w.lower() in plan for w in case.get("plan_excludes", []))
         and len(text.split()) >= case.get("min_words", 0)
         and all(word.lower() in lowered for word in case.get("mention_all", []))
         and (not case.get("mention_any") or any(w.lower() in lowered for w in case["mention_any"]))
@@ -107,12 +113,14 @@ def main():
                         )
                     except ValueError as e:
                         row.update(status="rejected", text=f"{e}: {raw_seen.get('raw', '')}")
-                    row["pass"] = score(case, row["status"], row["text"])
+                    row["pass"] = score(case, row["status"], row["text"], row.get("proposal", {}))
                     results.append(row)
+                    answer = row.get("proposal", {})
                     print(
                         f"{'PASS' if row['pass'] else 'FAIL'} {mode:6s} {pixels:>7} {label:8s} "
                         f"{case['name']:18s} {row['status']:13s} "
-                        f"{row.get('model_ms', 0):>6.0f}ms {row['text'][:80]!r}",
+                        f"{row.get('model_ms', 0):>6.0f}ms {answer.get('mode', ''):7s} "
+                        f"check={answer.get('check', '')[:8]!r} {row['text'][:80]!r}",
                         flush=True,
                     )
             del engine
@@ -135,7 +143,7 @@ def main():
             f"  {mode:6s} {pixels:>7} {label:8s} {len(rows) - len(failed)}/{len(rows)}  "
             f"{statistics.median(r['model_ms'] for r in timed):>6.0f} ms  "
             f"{statistics.median(r['input_tokens'] for r in timed):>6.0f} tok"
-            + f"  4-line format {sum(bool(r.get('proposal', {}).get('evidence')) for r in rows)}"
+            + f"  with PLAN {sum(bool(r.get('proposal', {}).get('plan')) for r in rows)}"
             + (f"  failed: {', '.join(failed)}" if failed else "")
         )
     if args.out:

@@ -2,6 +2,32 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-30 — The model checks its last step and keeps a plan (commit "Have Qwen check its last step and keep a plan")
+
+The model only saw what it had said aloud, not what it had predicted, so it could not verify a step. With the old prompt, a "done" on an unchanged scene moved on to the next step.
+
+**Changed behavior**
+- The model answers in seven lines. Only `SAY` is spoken.
+  - New `CHECK`: is the last `EXPECT` true now (`yes`, `no`, `unknown`, `none`)? "done" is treated as a claim.
+  - New `UNKNOWN`: a fact the step depends on that the scene does not show. ACT is only for when it is `none`; INSPECT and ASK resolve it.
+  - New `PLAN`: the steps left, separated by `;`.
+- Assistant turns in the history now hold the model's whole answer, not only the spoken line, in guidance_node and in workbench sessions. The next plan can read its own `EXPECT` and `PLAN`.
+- `max_new_tokens` is 256 (was 192).
+- Older four-line and one-line answers still parse; the missing fields are empty.
+
+**Added**
+- `proposal` gains `check`, `unknown` and `plan`. guidance_node writes them into `plan_result`.
+- `scripts/replay_eval.py`: optional `expect_mode`, `expect_check` and `plan_excludes`. The repeat check compares against the last turn's `SAY`, since turns now hold every line.
+
+**Measured** (replay on the RTX 5090, 17 cases from a few desk scenes, also used to tune the prompt)
+- 14/17 against 9/17 for the four-line prompt. One of the old prompt's failures (`verify-passed`) only reflects that it writes no `CHECK` line; its step was right.
+- Median model time 2.2 s against 1.9 s.
+- Still failing: `pens-help` (help only rephrases the step), `correction-replan` (`SAY` repeats the correction and `PLAN` keeps the old steps), `estop-visible` (calls a visible object's location unknown).
+- Restating the last reply after the video fixed `correction-replan` but broke `verify-passed`, so it is not included. Small wording changes flipped several cases.
+
+**Upgrade notes**
+- Restart the backend; guidance_node needs no rebuild.
+
 ## 2026-10-29 — Descriptive instructions with a logged proposal (commit "Make Qwen's instructions descriptive and log its proposal")
 
 In today's trials, instructions were about 10 words ("Reach for the black marker on the grey table."). 4 of 7 replans repeated the last instruction word for word, including after "I need more help with this step."

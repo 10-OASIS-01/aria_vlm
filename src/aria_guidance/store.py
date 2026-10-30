@@ -128,7 +128,8 @@ class Store:
                     if response["status"] == "done_proposed"
                     else "awaiting_feedback"
                 )
-                session["history"].append({"role": "assistant", "text": response["instruction"]})
+                text = response.get("raw_output") or response["instruction"]
+                session["history"].append({"role": "assistant", "text": text})
                 session["history"] = session["history"][-24:]
                 session["updated_at"] = time.time()
                 self._put(db, "sessions", session)
