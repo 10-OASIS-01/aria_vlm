@@ -49,6 +49,13 @@ class GuidanceClient:
             json={"goal": goal, "history": history, "frames": frames, "live": live},
         )
 
+    def intent(self, text, goal="", state="", instruction=""):
+        return self.request(
+            "POST",
+            "v1/intent",
+            json={"text": text, "goal": goal, "state": state, "instruction": instruction},
+        )
+
     def live_state(self, state):
         return self.request("POST", "v1/live/state", json=state)
 

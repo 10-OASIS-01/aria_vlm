@@ -21,6 +21,7 @@ from .live import LiveRelay
 from .schemas import (
     ClientEvent,
     Feedback,
+    IntentRequest,
     LiveCommand,
     PlanRequest,
     PlanV1,
@@ -237,6 +238,20 @@ def create_app(settings=None, engine=None, load_model=True, system=None):
             "received_at_ms": received_at_ms,
             "responded_at_ms": time.time() * 1000,
         }
+
+    @app.post("/v1/intent")
+    async def intent(body: IntentRequest):
+        """Labels one utterance from text alone; guidance_node decides what the label does."""
+        try:
+            return await asyncio.to_thread(
+                engine.classify, body.text, body.goal, body.state, body.instruction
+            )
+        except ModelBusy as e:
+            raise HTTPException(429, str(e)) from e
+        except Exception as e:
+            LOGGER.exception("Intent classification failed")
+            reason = f"{type(e).__name__}: {e}"[:300]
+            raise HTTPException(503, f"Inference failed ({reason}); inspect server logs") from e
 
     @app.post("/api/sessions/{session_id}/plan")
     async def plan(session_id: UUID, body: PlanRequest):

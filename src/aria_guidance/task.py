@@ -10,7 +10,16 @@ CONFIRM_WORDS = {"done", "yes", "confirm", "完成", "好了", "是"}
 NEXT_WORDS = {"next", "done", "完成", "下一步", "好了"}
 CANCEL_WORDS = {"cancel", "stop", "停止", "取消"}
 REPEAT_WORDS = {"repeat", "重复", "再说一遍"}
-FINISH_WORDS = {"finish", "finished", "finish task", "task finished", "结束"}
+FINISH_WORDS = {
+    "finish",
+    "finished",
+    "finish task",
+    "task finished",
+    "trial end",
+    "end trial",
+    "goal end",
+    "结束",
+}
 # Saying so explicitly stops the model from repeating DONE (a bare "Next." did not, in replay).
 REJECTION = "No, the goal is not complete yet. "
 MAX_HISTORY = 24
@@ -84,6 +93,11 @@ class Task:
     def fail_plan(self, epoch):
         if epoch == self.epoch and self.state == "planning":
             self.state = "error"
+
+    def abandon_plan(self, epoch):
+        """Stops waiting for a running plan, so feedback is accepted; finish_plan drops its result."""
+        if epoch == self.epoch and self.state == "planning":
+            self.state = "awaiting_feedback"
 
     def feedback(self, text):
         """Records a reply and asks for a new plan; returns False while one is running."""

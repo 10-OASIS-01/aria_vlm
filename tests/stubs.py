@@ -12,6 +12,22 @@ class StubEngine:
         self.state, self.reply, self.delay = "ready", reply, delay
         self.busy = False
         self.calls = []
+        self.intent = "done"  # classify's label, or an Exception.
+        self.intent_calls = []
+
+    def classify(self, text, goal, state, instruction):
+        self.intent_calls.append(
+            {"text": text, "goal": goal, "state": state, "instruction": instruction}
+        )
+        if isinstance(self.intent, Exception):
+            raise self.intent
+        return {
+            "label": self.intent,
+            "raw_output": str(self.intent),
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "timings": {},
+        }
 
     def status(self):
         return {"state": self.state, "busy": self.busy}

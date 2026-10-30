@@ -2,6 +2,42 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-30 — "Aria" open-mic commands with an intent classifier (commit "Add Aria open-mic commands with an intent classifier")
+
+The wearer had to hold push-to-talk, and anything that wasn't an exact word was feedback or, with no task, a new goal. An open mic would have turned any chatter into a trial. Now the mic stays on and "Aria" marks speech meant for the system. [ROS control](ros-control.md) has the full tables and limits.
+
+**Changed behavior**
+- With `open_mic: true`, speech without "Aria" is dropped, unless a reply window is open. Its text is not saved.
+- "Aria, trial start, ..." opens a trial, and "Aria, trial start" alone asks for the goal. In a running trial, it closes that trial as `replaced`.
+- Exact words ("Aria, stop", "Aria, finish", "Aria, trial end", "Aria, done", "Aria, next", "Aria, repeat", "Aria, note: ...") act without a model call. `trial end`, `end trial` and `goal end` also finish a task on Hold to talk and `/guidance/reply`.
+- Anything else addressed in a running trial is classified: `done`, `help`, `correction`, `repeat`, `cancel`, `finish` or `ignore`. **The model can never close a trial.** `cancel` and `finish` only say how to.
+- A finished plan's instruction is held while an utterance is pending or someone is mid-sentence (at most 8 s). If the speech is an action, the instruction is dropped and a new plan runs.
+- `/guidance/talk` is also refused while an instruction is held. Otherwise the recording's reply would be refused as busy.
+- Captions and the Trials timeline say `Human:` and `System:`, not `Goal`, `Guide`, `Operator`, `Heard` or `Spoken`. A spoken reply appears once: its `reply` event carries `voice: true`.
+- `video.mp4` gains an AAC track from the glasses' microphones.
+
+**Added**
+- `POST /v1/intent`: a text-only label from the Qwen model already loaded, with no frames. It waits up to 15 s for a running plan, where `/v1/plan` answers 429 at once.
+- `audio.pcm` in each trial folder (mono int16), and `audio: {rate, start_ms}` in `trial.json`. It starts about 10 s before the goal, like the frames.
+- `transcript` events carry `intent`.
+- guidance_node parameters `open_mic` (false in code, true in `guidance.yaml`) and `open_mic_threshold` (0.006 RMS after gain).
+- `aria_guidance/intent.py`, `audio.Endpointer`, `Task.abandon_plan`, `scripts/intent_eval.py` and `scripts/intent_cases.json`.
+- `tests/integration/test_open_mic.py`.
+
+**Measured** (RTX 5090, no glasses and no real voices yet)
+- Classifier: 45/46 on hand-labelled cases, and 29/30 on the cases not copied from the prompt's examples. The one miss is "uh, okay so", labelled `done` instead of `ignore`.
+- Classifier round trip: median 284 ms, max 518 ms, first call 1.7 s.
+- Whisper: about 1.5 s per utterance on CPU, including 1 s clips. That is above the 1 s hoped for.
+- End of speech to the first spoken response, on a full rehearsal with `espeak-ng` speech and the test camera: 2.9 s for "Okay", and 4.5 s for the first instruction of a new trial.
+- Wake word, same speech at 0.02 RMS with room noise, through `Endpointer`: 14/14 addressed or not as intended. At 0.0096 RMS, the measured level of real speech: 13/14 with 100 ms blocks and 11/14 with 20 ms blocks. Whisper garbled more words there too, such as "Aria Star" for "Aria, stop", which does nothing rather than close the trial. Real voices may differ.
+- The hotword added "Aria" to no chatter clip and no room-noise clip (0/9). Without about 0.3 s of lead-in, Whisper drops "Aria" from the start of speech, so the endpointer's pre-roll is required.
+
+**Upgrade notes**
+- Restart the backend and guidance_node. With `--symlink-install`, no rebuild is needed.
+- **Bystanders' voices are saved.** Every new trial keeps all microphone audio, so tell people nearby. Set `open_mic: false` to go back to Hold to talk only; trials still save audio.
+- Old trials keep their silent video and old caption labels, because closed trials' `video.mp4` and `video.vtt` are cached. Deleting an old `video.vtt` regenerates it with the new labels.
+- `open_mic_threshold` and the block size are not yet checked on the glasses. Run `tools/mic_level.py` and the live steps in the plan first.
+
 ## 2026-10-30 — The model checks its last step and keeps a plan (commit "Have Qwen check its last step and keep a plan")
 
 The model only saw what it had said aloud, not what it had predicted, so it could not verify a step. With the old prompt, a "done" on an unchanged scene moved on to the next step.

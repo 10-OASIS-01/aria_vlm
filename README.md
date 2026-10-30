@@ -163,7 +163,7 @@ Everything runs from the **Live** view, numbered in the picture at the top of th
 | 2 | System row | Starts **Guidance** and picks a **Camera**: Glasses (Rerun viewer off), Test camera, or Off. Glasses and Test camera exclude each other. | |
 | 3 | Goal and instruction | Shows the goal and the current step. With no goal, a text box takes one, and Enter sends it. | |
 | 4 | Done with step, Need help | Reports back, and the model plans again either way. When it thinks the goal is reached, these become Yes, finish and Not yet. | D, H (F, N) |
-| 5 | Hold to talk | Records the glasses' microphone while held. | Space |
+| 5 | Hold to talk | Records the glasses' microphone while held, with no "Aria" needed. The wearer can also speak any time, starting with "Aria". | Space |
 | 6 | Repeat, New goal, Finish task | Speaks the step again, replaces the goal, or closes the trial as completed. Finish task takes a second press. | R, F |
 | 7 | Note | Adds a note to the trial record. | |
 | 8 | Cancel task | Ends the task. Takes a second press. | |
@@ -178,7 +178,7 @@ The words in the boxes are what the band says, with the matching state from `/gu
 - Commands are refused while `guidance_node` is not connected.
 - A process that fails shows its cause in one line, with the log one click away. The processes are fixed commands from `aria_guidance/system.py`, log to `.runtime/logs/`, and keep running across a backend restart.
 
-The wearer can run the task by voice too, and the same task controls exist as ROS topics. [ROS control](docs/ros-control.md) has the spoken commands and the terminal equivalents.
+The wearer can run the task by voice, starting each command with "Aria" ("Aria, trial start, pick up the marker"), and the same task controls exist as ROS topics. The microphone stays on, and each trial saves its audio, so tell people nearby. [ROS control](docs/ros-control.md) has the spoken commands and the terminal equivalents.
 
 The console's other views are **Trials**, below, **Setup**, a short version of this section, and **Try a task**, which plans from an uploaded clip of at least 10 seconds without any ROS. The browser turns the last 10 seconds into 20 timestamped frames.
 
@@ -195,7 +195,8 @@ data/sessions/<session>/trials/03_142211/
 ├── trial.json       goal, start and end (host ms and ns), outcome, steps, latency summary
 ├── guidance.jsonl   goal, plan_request, plan_result, tts, reply, transcript, note, state, error
 ├── frames/<ms>.jpg  preview JPEGs at about 5 Hz, starting with the 10 s before the goal
-├── video.mp4        built from frames/ on first view, timed by the capture stamps
+├── audio.pcm        the glasses' microphones, mono int16, from about 10 s before the goal
+├── video.mp4        built from frames/ and audio.pcm on first view, timed by the capture stamps
 ├── video.vtt        captions of everything said and noted, which VLC also shows
 └── review.json      the verdict and notes from the Trials view
 ```

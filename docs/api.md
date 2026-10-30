@@ -35,6 +35,7 @@ client.close()
 | GET | `/api/ready` | Model state; 503 until ready |
 | GET | `/api/status` | Model, ASR, latest evaluation and recent sessions |
 | POST | `/v1/plan` | `{goal, history, frames, live?}` → next instruction. Stateless: the caller owns the task |
+| POST | `/v1/intent` | `{text, goal?, state?, instruction?}` → one label for an utterance, from text alone. Stateless |
 | POST | `/v1/asr` | Same as `/api/transcribe` |
 | POST | `/v1/live/state` | guidance_node's state JSON, on change and every 2 s |
 | PUT | `/v1/live/preview` | guidance_node's newest preview JPEG |
@@ -46,8 +47,8 @@ client.close()
 | POST | `/api/system/{name}/{start\|stop}` | Starts or stops one of those three; nothing else can be run |
 | GET | `/api/trials` | Trial summaries from `ARIA_SESSIONS_DIR` and `.runtime/guidance`, newest first |
 | GET | `/api/trials/{session}/{trial}` | `trial.json`, events, review, frame count and the first frame's time |
-| GET | `/api/trials/{session}/{trial}/video.mp4` | Frames as H.264, timed by capture stamps; cached once the trial closes |
-| GET | `/api/trials/{session}/{trial}/captions.vtt` | WebVTT of goal, spoken instructions, replies, transcripts and notes, timed like the video |
+| GET | `/api/trials/{session}/{trial}/video.mp4` | Frames as H.264 with the microphone as AAC when recorded, timed by capture stamps; cached once the trial closes |
+| GET | `/api/trials/{session}/{trial}/captions.vtt` | WebVTT of what was said (`Human:`, `System:`) and notes, timed like the video |
 | PUT | `/api/trials/{session}/{trial}/review` | `{verdict: success\|fail\|null, notes}` (notes ≤ 10,000 characters) |
 | POST | `/api/sessions` | `{goal, source, task_id?}` → new session |
 | GET | `/api/sessions/{id}` | Goal, state, history, plans and client events |
@@ -75,6 +76,8 @@ The ROS bridge samples a bounded buffer. It requires a sufficiently complete win
 ## Stateless planning
 
 `POST /v1/plan` is what `guidance_node` uses. The body carries the goal, the dialogue `history` (at most 24 turns of `{role: user|assistant, text}`) and the 20 frames. `live` (default true) applies the frame age check; set it false for recorded frames. The response has `status`, `instruction`, `raw_output`, token counts, `timings`, `received_at_ms` and `responded_at_ms`. Nothing is stored. Busy is 429, a loading model 503, bad or stale frames 422.
+
+`POST /v1/intent` sorts one utterance into `done`, `help`, `correction`, `repeat`, `cancel`, `finish` or `ignore`. The body carries the words (1–1500 characters) and optionally the `goal`, the task `state` and the last `instruction`. The response has `label`, `raw_output`, token counts and `timings`; `label` is null when the model's answer is not a label. It uses the loaded Qwen model with no frames and at most 6 output tokens. Unlike `/v1/plan`, it waits up to 15 s for a running plan before answering 429. A loading model or failed call is 503. The label decides nothing by itself: `guidance_node` maps it to an action and never closes a trial on it.
 
 ## Session lifecycle
 

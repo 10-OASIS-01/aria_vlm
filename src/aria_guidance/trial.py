@@ -4,7 +4,8 @@
     trial.json      goal, start/end (host ms and ns), outcome, steps, latency summary
     guidance.jsonl  one event per line: goal, plan_request, plan_result, tts, reply, note, ...
     frames/<ms>.jpg the preview JPEGs, about 5 Hz
-    video.mp4       frames/ encoded on first view by the backend, timed by the frame stamps
+    audio.pcm       the glasses' microphones, mono int16; trial.json's audio gives rate and start
+    video.mp4       frames/ and audio.pcm encoded on first view by the backend, timed by the stamps
     video.vtt       captions for video.mp4 from guidance.jsonl (VLC loads it with the video)
     review.json     verdict and notes; only the backend's Trials page writes it
 
@@ -21,9 +22,12 @@ from fractions import Fraction
 from itertools import pairwise
 from pathlib import Path
 
+import numpy as np
+
 # shortcut: assumes the source layout (aria_vlm/src/aria_guidance); set fallback_root otherwise.
 FALLBACK_ROOT = Path(__file__).resolve().parents[2] / ".runtime" / "guidance"
 LIVE_SECONDS = 120  # aria_node appends to clock.csv while it streams.
+AUDIO_RESYNC_SECONDS = 0.25  # Stamps jitter; only a larger difference is a real gap or overlap.
 
 
 def write_json(path, body):
@@ -40,6 +44,7 @@ class TrialRecorder:
         self.session_root, self.fallback_root = Path(session_root), Path(fallback_root)
         self.fallback = None  # One fallback folder per node run, made on first use.
         self.folder, self.body, self.latencies = None, None, []
+        self.audio_samples, self.audio_stopped = 0, False
         self.last_ref = None  # {session, id} of the newest trial, open or closed, for the console.
 
     def session_folder(self):
@@ -59,7 +64,7 @@ class TrialRecorder:
             self.fallback = self.fallback_root.expanduser() / stamp
         return self.fallback
 
-    def open(self, goal, frames, camera=None):
+    def open(self, goal, frames, camera=None, audio_blocks=()):
         """Starts a trial; a trial still open is closed as replaced.
 
         Args:
@@ -67,6 +72,7 @@ class TrialRecorder:
             frames: BufferedFrames already buffered, saved so the video starts with what the
                 model saw.
             camera: glasses, fake (tools/fake_camera.py), another frame_id, or None.
+            audio_blocks: (stamp_ms, samples, rate) already buffered, saved for the same reason.
         """
         if self.folder:
             self.close("replaced")
@@ -91,14 +97,46 @@ class TrialRecorder:
             "outcome": None,
             "steps": 0,
             "latency_ms": None,
+            "audio": None,
         }
         self.latencies = []
+        self.audio_samples, self.audio_stopped = 0, False
         write_json(self.folder / "trial.json", self.body)
         self.event("goal", text=goal)
+        for block in audio_blocks:
+            self.audio(*block)
 
     def frame_path(self, timestamp_ms):
         """Where a preview frame goes, or None with no open trial. The node writes it off-thread."""
         return self.folder / "frames" / f"{int(timestamp_ms)}.jpg" if self.folder else None
+
+    def audio(self, stamp_ms, samples, rate):
+        """Appends one microphone block where its stamp says, so lost blocks do not shift the sound.
+
+        Args:
+            stamp_ms: host time of the first sample.
+            samples (N,): mono floats in -1 to 1, with the same gain the recognizer hears.
+            rate: samples per second; a change stops the audio of this trial.
+        """
+        if not self.folder or self.audio_stopped:
+            return
+        if self.body["audio"] is None:
+            self.body["audio"] = {"rate": rate, "start_ms": stamp_ms}
+            write_json(self.folder / "trial.json", self.body)
+        elif self.body["audio"]["rate"] != rate:
+            self.audio_stopped = True
+            return
+        pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2")
+        offset = round((stamp_ms - self.body["audio"]["start_ms"]) * rate / 1000)
+        difference = offset - self.audio_samples
+        if abs(difference) > AUDIO_RESYNC_SECONDS * rate:
+            if difference > 0:
+                pcm = np.concatenate([np.zeros(difference, dtype="<i2"), pcm])
+            else:
+                pcm = pcm[-difference:]
+        with open(self.folder / "audio.pcm", "ab") as f:
+            f.write(pcm.tobytes())
+        self.audio_samples += len(pcm)
 
     def event(self, kind, **fields):
         if not self.folder:
@@ -211,10 +249,10 @@ def write_review(folder, verdict, notes):
 
 
 CAPTIONS = {
-    "goal": "Goal",
-    "tts": "Guide",
-    "reply": "Operator",
-    "transcript": "Heard",
+    "goal": "Human",
+    "tts": "System",
+    "reply": "Human",
+    "transcript": "Human",
     "note": "Note",
 }
 
@@ -241,7 +279,8 @@ def trial_captions(folder):
     for event in detail["events"]:
         if event["kind"] == "end":
             cues.append((event["t_ms"] - start, f"Trial ended: {event.get('outcome')}"))
-        elif event["kind"] in CAPTIONS and event.get("text"):
+        # A spoken reply is already captioned as its transcript.
+        elif event["kind"] in CAPTIONS and event.get("text") and not event.get("voice"):
             cues.append((event["t_ms"] - start, f"{CAPTIONS[event['kind']]}: {event['text']}"))
     cues.sort(key=lambda cue: cue[0])
     lines = ["WEBVTT", ""]
@@ -257,8 +296,28 @@ def trial_captions(folder):
     return target
 
 
+def video_audio(path, sound, first_frame_ms, length_ms):
+    """audio.pcm lined up with the video: padded or cut at both ends.
+
+    Args:
+        path: the audio.pcm file.
+        sound: trial.json's audio, {rate, start_ms}.
+        first_frame_ms: stamp of the video's first frame.
+        length_ms: the video's length.
+
+    Returns:
+        pcm (N,): int16 samples, exactly as long as the video.
+    """
+    rate = sound["rate"]
+    pcm = np.fromfile(path, dtype="<i2")
+    offset = round((sound["start_ms"] - first_frame_ms) * rate / 1000)
+    pcm = np.concatenate([np.zeros(offset, dtype="<i2"), pcm]) if offset > 0 else pcm[-offset:]
+    length = round(length_ms * rate / 1000)
+    return np.concatenate([pcm, np.zeros(max(length - len(pcm), 0), dtype="<i2")])[:length]
+
+
 def trial_video(folder):
-    """frames/ as an H.264 mp4 whose timestamps are the capture times, cached once closed.
+    """frames/ as an H.264 mp4 timed by the capture times, with audio.pcm, cached once closed.
 
     Returns:
         The mp4 path, or None when the trial has no frames.
@@ -267,7 +326,8 @@ def trial_video(folder):
     from PIL import Image
 
     target = folder / "video.mp4"
-    live = read_json(folder / "trial.json", {}).get("outcome") is None
+    trial = read_json(folder / "trial.json", {})
+    live = trial.get("outcome") is None
     with ENCODE_LOCK:
         if target.exists() and not live:
             return target
@@ -295,6 +355,11 @@ def trial_video(folder):
             ms = Fraction(1, 1000)
             stream.time_base = stream.codec_context.time_base = ms
             stream.pix_fmt = "yuv420p"
+            # Before the first frame: the header is written with the first packet.
+            sound = trial.get("audio") if (folder / "audio.pcm").is_file() else None
+            sound_stream = None
+            if sound:
+                sound_stream = container.add_stream("aac", rate=sound["rate"], layout="mono")
             for stamp, offset in zip(stamps, offsets):
                 with Image.open(folder / "frames" / f"{stamp}.jpg") as image:
                     image = image.convert("RGB")
@@ -305,5 +370,13 @@ def trial_video(folder):
                 frame.pts, frame.time_base = offset, ms
                 mux(stream.encode(frame))
             mux(stream.encode())
+            if sound_stream:
+                length_ms = offsets[-1] + 200
+                pcm = video_audio(folder / "audio.pcm", sound, stamps[0], length_ms)
+                frame = av.AudioFrame.from_ndarray(pcm[None], format="s16", layout="mono")
+                frame.sample_rate, frame.pts = sound["rate"], 0
+                frame.time_base = Fraction(1, sound["rate"])
+                container.mux(sound_stream.encode(frame))
+                container.mux(sound_stream.encode())
         os.replace(tmp, target)
         return target

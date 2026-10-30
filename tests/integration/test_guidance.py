@@ -40,7 +40,7 @@ def test_done_sends_feedback_and_confirm_completes(probe, node, camera, backend,
     ]
     probe.publish("/guidance/reply", "done")
     assert heard(probe, node, 3) == "Task complete."
-    wait_for(lambda: probe.state().get("task") == "completed")
+    wait_for(lambda: trials(tmp_path)[0][0]["outcome"])  # Closed just after the state goes out.
     assert len(backend.engine.calls) == 2
     [(trial, events, _)] = trials(tmp_path)
     assert trial["outcome"] == "completed" and trial["steps"] == 2
@@ -147,6 +147,7 @@ def test_operator_finishes_without_a_completion_proposal(probe, node, camera, ba
     heard(probe, node, 1)
     probe.publish("/guidance/reply", "finish")
     assert heard(probe, node, 2) == "Task complete."
+    wait_for(lambda: trials(tmp_path)[0][0]["outcome"])
     [(trial, events, _)] = trials(tmp_path)
     assert trial["outcome"] == "completed"
     assert [e["text"] for e in events if e["kind"] == "reply"] == ["finish"]

@@ -7,6 +7,7 @@ from stubs import StubEngine
 from test_service_freshness import frames
 
 from aria_guidance.config import Settings
+from aria_guidance.engine import ModelBusy
 from aria_guidance.service import create_app
 
 
@@ -78,3 +79,46 @@ def test_asr_route_reaches_transcribe(client):
     response = client.post("/v1/asr", files={"file": ("a.wav", b"RIFF", "audio/wav")})
     assert response.status_code in {422, 503}
     assert response.status_code != 404
+
+
+def test_intent_returns_the_label_with_the_callers_context(client, engine):
+    engine.intent = "help"
+    body = {"text": "I can't find it", "goal": "Clear", "state": "planning", "instruction": "Go."}
+    response = client.post("/v1/intent", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["label"] == "help"
+    assert engine.intent_calls == [body]
+
+
+def test_intent_passes_an_unusable_answer_as_no_label(client, engine):
+    engine.intent = None
+    assert client.post("/v1/intent", json={"text": "hm"}).json()["label"] is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"text": ""},
+        {"text": "x" * 1501},
+        {"text": "x", "goal": "x" * 1501},
+        {"text": "x", "a": 1},
+    ],
+)
+def test_intent_rejects_bad_bodies(client, body):
+    assert client.post("/v1/intent", json=body).status_code == 422
+
+
+def test_intent_errors_map_like_plan(client, engine):
+    engine.intent = ModelBusy("busy")
+    assert client.post("/v1/intent", json={"text": "hi"}).status_code == 429
+    engine.intent = RuntimeError("Model is not ready")
+    response = client.post("/v1/intent", json={"text": "hi"})
+    assert response.status_code == 503 and "Model is not ready" in response.json()["detail"]
+
+
+def test_intent_needs_the_token(tmp_path, engine, monkeypatch):
+    monkeypatch.setenv("ARIA_API_TOKEN", "secret")
+    app = create_app(Settings(data_dir=tmp_path, save_frames=False), engine, load_model=False)
+    assert TestClient(app).post("/v1/intent", json={"text": "hi"}).status_code == 401
+    assert engine.intent_calls == []

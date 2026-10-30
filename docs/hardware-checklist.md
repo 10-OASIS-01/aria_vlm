@@ -15,7 +15,7 @@ This checklist is for Hitesh and Matthew's lab test. The notebook's rendered tri
 
 Use a red mug, a round coaster, a blue book and an open tray. Place the mug and book on a white work mat. Goal: “Clear the white work mat by placing the red mug on the brown round coaster and the blue book inside the open tray.”
 
-1. Speak the goal using push-to-talk; save the recognized transcript.
+1. Speak the goal ("Aria, trial start, ...", or push-to-talk); save the recognized transcript.
 2. Wait for a complete observation window and the first audible instruction.
 3. Perform exactly that action, then say `done`.
 4. Repeat until Qwen declares completion, or stop and record the reason for failure.

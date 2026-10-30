@@ -147,7 +147,7 @@ function renderLive(s){
   // The button the band asks for is the dark one.
   document.querySelectorAll("#live .live-controls .button").forEach(b=>{if(b.type==="submit")return;const main=primary?b.matches(primary):false;b.classList.toggle("dark",main);b.classList.toggle("light",!main);});
   $("#live-talk").classList.toggle("asked",primary==="#live-talk");
-  $("#live-talk-hint").textContent=active?"Records the glasses' microphone. The wearer can say done, help, repeat, finish, or anything as feedback.":"Records the glasses' microphone. With no goal yet, what the wearer says becomes the goal.";
+  $("#live-talk-hint").textContent=active?"The wearer can also speak any time, starting with Aria: done, stop, finish, or anything as feedback. Hold this to record without saying Aria.":"The wearer can also say Aria, trial start, then the goal. Hold this to record without saying Aria; what is said becomes the goal.";
   // While a task runs, the goal form hides behind New goal, so a stray submit cannot replace it.
   const showForm=!active||live.editingGoal;
   $("#live-goal-form").hidden=!showForm;$("#live-newgoal").hidden=!active||live.editingGoal;$("#live-newgoal").setAttribute("aria-expanded",String(showForm));
@@ -269,7 +269,7 @@ setInterval(()=>{if(live.visible)loadSystem();},2000);loadSystem();
 const trials={list:[],current:null,detail:null,events:[]};
 const OUTCOMES={completed:["Completed","ready"],cancelled:["Cancelled","subtle"],replaced:["Replaced","subtle"],aborted:["Aborted","error"]};
 const OUTCOME_HELP={Completed:"The goal was reached: finished by the operator or confirmed after the model proposed it.",Cancelled:"The operator cancelled the task.",Replaced:"A new goal was set before this one finished.",Aborted:"The guidance program was stopped during the trial.",Interrupted:"The guidance program died without closing the trial.",Running:"Still recording."};
-const EVENT_LABELS={goal:"Goal",tts:"Spoken",reply:"Reply",transcript:"Heard",note:"Note",error:"Error",end:"End"};
+const EVENT_LABELS={goal:"Human",tts:"System",reply:"Human",transcript:"Human",note:"Note",error:"Error",end:"End"};
 const trialURL=(t,suffix="")=>`api/trials/${encodeURIComponent(t.session)}/${encodeURIComponent(t.id)}${suffix}`;
 const clock=(ms)=>{const s=Math.max(0,Math.round(ms/1000));return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;};
 const when=(ms)=>ms?new Date(ms).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):"Unknown time";
@@ -321,7 +321,7 @@ async function openTrial(t){
     const track=document.createElement("track");Object.assign(track,{kind:"captions",srclang:"en",label:"Guidance",default:true,src:localURL(trialURL(t,`/captions.vtt${fresh}`))});
     video.append(track);
   }else video.removeAttribute("src");
-  trials.events=detail.events.filter(e=>EVENT_LABELS[e.kind]).map(e=>({...e,offset:detail.video_start_ms==null?null:e.t_ms-detail.video_start_ms}));
+  trials.events=detail.events.filter(e=>EVENT_LABELS[e.kind]&&!e.voice).map(e=>({...e,offset:detail.video_start_ms==null?null:e.t_ms-detail.video_start_ms}));
   $("#trial-events").innerHTML=trials.events.length?trials.events.map((e,i)=>`<li><button type="button" class="event kind-${e.kind}" data-event="${i}"${e.offset==null?" disabled":""}><span class="event-time">${e.offset==null?"–":clock(e.offset)}</span><span class="event-kind">${EVENT_LABELS[e.kind]}</span><span class="event-text">${esc(eventText(e))}</span></button></li>`).join(""):`<li class="trial-empty">No events were recorded.</li>`;
   $("#trial-events").querySelectorAll("[data-event]").forEach(el=>el.onclick=()=>{video.currentTime=Math.max(0,trials.events[Number(el.dataset.event)].offset/1000);video.play().catch(()=>{});});
   renderReview(detail.review);$("#review-status").textContent="";tour.check();

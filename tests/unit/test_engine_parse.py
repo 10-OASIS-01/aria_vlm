@@ -1,6 +1,8 @@
 import pytest
 
-from aria_guidance.engine import parse_output
+from aria_guidance import engine as engine_module
+from aria_guidance.config import Settings
+from aria_guidance.engine import ModelBusy, QwenEngine, parse_output
 
 GOAL = "Put the orange pen into the green mug."
 
@@ -122,3 +124,21 @@ def test_bad_four_lines_are_rejected(raw, message):
 def test_one_line_answer_has_no_evidence():
     proposal = parse_output("Pick up the pen.", GOAL)[2]
     assert proposal["mode"] == "ACT" and not any(v for k, v in proposal.items() if k != "mode")
+
+
+def test_classify_waits_for_a_running_plan_then_gives_up(monkeypatch):
+    engine = QwenEngine(Settings())
+    engine.state = "ready"
+    monkeypatch.setattr(engine, "_classify", lambda *args: {"label": "done"})
+    monkeypatch.setattr(engine_module, "INTENT_WAIT_SECONDS", 0.05)
+    engine.lock.acquire()
+    with pytest.raises(ModelBusy):
+        engine.classify("next please", "goal", "ready", "")
+    engine.lock.release()
+    assert engine.classify("next please", "goal", "ready", "") == {"label": "done"}
+    assert not engine.lock.locked()
+
+
+def test_classify_refuses_an_unready_model():
+    with pytest.raises(RuntimeError, match="not ready"):
+        QwenEngine(Settings()).classify("next", "", "", "")

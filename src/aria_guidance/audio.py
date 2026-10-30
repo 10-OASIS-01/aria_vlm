@@ -48,6 +48,66 @@ def read_wav(data: bytes) -> tuple[np.ndarray, int]:
         raise ValueError("A valid 16-bit PCM WAV file is required") from e
 
 
+class Endpointer:
+    """Cuts a continuous microphone stream into utterances by loudness."""
+
+    def __init__(
+        self, threshold=0.006, pre_roll_s=0.3, silence_s=0.8, max_s=20.0, min_voiced_s=0.15
+    ):
+        """Args:
+        threshold: block RMS that counts as speech, after gain.
+            shortcut: fixed value, move to a noise-tracking floor if rooms vary.
+        pre_roll_s: audio kept from before the speech, so the first word is not clipped.
+        silence_s: trailing quiet that ends an utterance.
+        max_s: longest utterance; speech beyond it starts the next one.
+        min_voiced_s: loud time below this is a click, not speech, and is dropped.
+        """
+        self.threshold, self.pre_roll_s, self.silence_s = threshold, pre_roll_s, silence_s
+        self.max_s, self.min_voiced_s = max_s, min_voiced_s
+        self.rate = 0
+        self.reset()
+
+    def reset(self):
+        self.speaking = False
+        self.pre_roll, self.chunks = [], []
+        self.pre_samples = self.samples = self.voiced = self.quiet = 0
+
+    def finish(self):
+        utterance = np.concatenate(self.chunks)
+        voiced = self.voiced
+        self.reset()
+        return utterance if voiced >= self.min_voiced_s * self.rate else None
+
+    def feed(self, samples, rate):
+        """Takes one mono block; returns a finished utterance (N,) at this rate, or None."""
+        if rate != self.rate:
+            self.reset()
+            self.rate = rate
+        loud = len(samples) > 0 and float(np.sqrt(np.mean(samples**2))) >= self.threshold
+        if not self.speaking:
+            self.pre_roll.append(samples)
+            self.pre_samples += len(samples)
+            while self.pre_samples - len(self.pre_roll[0]) >= self.pre_roll_s * rate:
+                self.pre_samples -= len(self.pre_roll.pop(0))
+            if not loud:
+                return None
+            self.speaking = True
+            self.chunks, self.samples = self.pre_roll, self.pre_samples
+            self.pre_roll, self.pre_samples = [], 0
+            self.voiced = len(samples)
+            return None
+        self.chunks.append(samples)
+        self.samples += len(samples)
+        if loud:
+            self.voiced += len(samples)
+            self.quiet = 0
+        else:
+            self.quiet += len(samples)
+        if self.quiet >= self.silence_s * rate or self.samples >= self.max_s * rate:
+            return self.finish()
+        return None
+
+
 class SpeechRecognizer:
     def __init__(self, model_path: str):
         self.model_path = model_path
@@ -89,7 +149,9 @@ class SpeechRecognizer:
                 ).astype(np.float32)
             if float(np.sqrt(np.mean(samples**2))) < 0.002:
                 return {"text": "", "language": None, "duration_ms": 0, "silence": True}
-            segments, info = self.model.transcribe(samples, beam_size=3, vad_filter=True)
+            segments, info = self.model.transcribe(
+                samples, beam_size=3, vad_filter=True, hotwords="Aria"
+            )
             text = " ".join(s.text.strip() for s in segments).strip()
             return {
                 "text": text,

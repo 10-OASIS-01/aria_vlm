@@ -10,6 +10,7 @@ import logging
 import queue
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -22,9 +23,10 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
 
-from aria_guidance.audio import mono_to_wav, pcm32_to_mono
+from aria_guidance.audio import Endpointer, mono_to_wav, pcm32_to_mono
 from aria_guidance.client import GuidanceClient
 from aria_guidance.frames import FrameBuffer, WindowNotReady, encode_jpeg, ros_image_to_pil
+from aria_guidance.intent import interpret, is_echo, route
 from aria_guidance.task import Task, parse_reply
 from aria_guidance.trial import FALLBACK_ROOT, TrialRecorder
 
@@ -36,6 +38,18 @@ CONFIRM_HINT = " Say done to confirm, or next to continue."
 # Frame IDs of known cameras: aria_node's RGB camera and tools/fake_camera.py.
 CAMERA_SOURCES = {"aria_rgb_optical_frame": "glasses", "fake_camera": "fake"}
 LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+ECHO_GUARD_SECONDS = 0.5  # The estimated end of speech is rough; keep the mic deaf a little longer.
+AUDIO_BUFFER_MS = 10_500  # About the frames a new trial's video opens with.
+MAX_QUEUED_UTTERANCES = 3
+# Seconds speech stays answerable after the system invites it, from the end of its own speech.
+GOAL_WINDOW_SECONDS = 15.0
+REPLY_WINDOW_SECONDS = 10.0
+ARIA_WINDOW_SECONDS = 8.0
+# Do not talk over someone, but ongoing chatter must not starve a finished instruction.
+HOLD_FOR_SPEECH_SECONDS = 8.0
+SAY_ASK_GOAL = "What is the goal?"
+SAY_OKAY = "Okay."
+SAY_SORRY = "Sorry, I didn't catch that."
 
 
 class GuidanceNode(Node):
@@ -51,6 +65,9 @@ class GuidanceNode(Node):
             "image_interval_ms": 200.0,
             "max_audio_seconds": 20.0,
             "audio_gain": 16.0,
+            # Always listen for "Aria"; console Hold to talk and /guidance/talk still work.
+            "open_mic": False,
+            "open_mic_threshold": 0.006,
             # aria_node's record.output_dir, relative to the same working directory.
             "session_root": "data/sessions",
             "fallback_root": str(FALLBACK_ROOT),
@@ -66,7 +83,7 @@ class GuidanceNode(Node):
         self.messages = queue.SimpleQueue()
         self.task = Task()
         self.trial = TrialRecorder(self.config["session_root"], self.config["fallback_root"])
-        self.last_state = None
+        self.last_state, self.last_detail = None, ""
         self.planning = False  # A plan request is in flight, possibly for an older epoch.
         self.last_image_ms = -1.0
         self.speaking_until = 0.0
@@ -77,6 +94,14 @@ class GuidanceNode(Node):
         self.audio_busy = False
         self.last_wait_log = 0.0
         self.last_heard = None
+        self.last_tts = None
+        self.voice_turn = False  # This reply came from speech, so its transcript already says it.
+        self.endpointer = Endpointer(self.config["open_mic_threshold"])
+        self.utterances = deque(maxlen=MAX_QUEUED_UTTERANCES)  # (samples, rate, started)
+        self.speech_started = 0.0
+        self.window = None  # (kind, deadline): speech needing no "Aria"; see intent.interpret.
+        self.held_plan, self.held_since = None, 0.0  # (epoch, result) waiting for speech to end.
+        self.audio_buffer = deque()  # (stamp_ms, samples, rate) for the start of the next trial.
         self.camera_frame = None  # frame_id of the newest image, which names its camera.
         self.closing = threading.Event()
         self.console_wake = threading.Event()
@@ -113,11 +138,14 @@ class GuidanceNode(Node):
         self.console_state = body
         self.console_wake.set()
         self.get_logger().info(f"{state}: {detail}")
+        self.last_detail = detail
         if state != self.last_state:
             self.last_state = state
             self.record("state", state=state, detail=detail)
 
     def record(self, kind, **fields):
+        if kind == "reply" and self.voice_turn:
+            fields["voice"] = True
         try:
             self.trial.event(kind, **fields)
         except OSError as e:  # A full disk must not stop guidance.
@@ -153,8 +181,14 @@ class GuidanceNode(Node):
             self.record("reply", text="goal: " + goal)
         self.task.start(goal)
         self.audio_active, self.audio_chunks = False, []
+        self.window, self.held_plan = None, None
         try:
-            self.trial.open(goal, list(self.frames.frames), self.camera_info()["source"])
+            self.trial.open(
+                goal,
+                list(self.frames.frames),
+                self.camera_info()["source"],
+                list(self.audio_buffer),
+            )
         except OSError as e:
             self.get_logger().error(f"Trial folder could not be written: {e}")
         self.status("ready", goal)
@@ -197,6 +231,7 @@ class GuidanceNode(Node):
             return
         self.task.cancel()
         self.audio_active, self.audio_chunks = False, []
+        self.window, self.held_plan = None, None
         self.record("reply", text="cancel")
         self.status("cancelled", "Pending planner output is invalidated")
         self.trial.close("cancelled")
@@ -216,6 +251,7 @@ class GuidanceNode(Node):
             self.complete("finish")
 
     def complete(self, reply):
+        self.window, self.held_plan = None, None
         self.record("reply", text=reply)
         self.publish_tts("Task complete.")
         self.record("tts", text="Task complete.", repeat=False)
@@ -225,6 +261,8 @@ class GuidanceNode(Node):
     def plan_if_ready(self):
         """Starts a plan when the task wants one, nothing else is running and frames are fresh."""
         if self.task.state != "ready" or self.planning or self.audio_active or self.audio_busy:
+            return
+        if self.utterances:
             return
         try:
             frames = self.frames.sample(now_ms=time.time() * 1000)
@@ -260,9 +298,12 @@ class GuidanceNode(Node):
         self.publish_tts(text)
         self.record("tts", text=text, repeat=repeat)
         self.status(result["status"], text)
+        if result["status"] in {"done_proposed", "clarification"}:
+            self.open_window("reply", REPLY_WINDOW_SECONDS)
 
     def publish_tts(self, text):
         self.tts_pub.publish(String(data=text))
+        self.last_tts = text
         # Upstream provides no playback acknowledgement. This is only an estimate for PTT/echo.
         estimated = max(len(text.split()) / 2.3, len(text) / 12) + 1.0
         self.speaking_until = time.monotonic() + estimated
@@ -278,6 +319,7 @@ class GuidanceNode(Node):
                 self.audio_active
                 or self.audio_busy
                 or self.planning
+                or self.held_plan
                 or time.monotonic() < self.speaking_until
             ):
                 message = "Wait for planning, recording, transcription or speech to finish"
@@ -285,6 +327,8 @@ class GuidanceNode(Node):
                 return False, message
             self.audio_active, self.audio_chunks, self.audio_rate = True, [], 0
             self.audio_started = time.monotonic()
+            self.endpointer.reset()
+            self.utterances.clear()
             self.status("recording", "Recording; release to send")
             return True, "Recording; call with data: false when finished"
         if not self.audio_active:
@@ -356,25 +400,187 @@ class GuidanceNode(Node):
                 self.closing.wait(2.0)  # Backend down; console_push logs it.
 
     def on_audio(self, message):
-        if not self.audio_active or message.sample_rate == 0:
+        if message.sample_rate == 0:
             return  # The first upstream block can have an unknown rate.
-        if self.audio_rate and self.audio_rate != message.sample_rate:
+        try:
+            samples = pcm32_to_mono(message.data, message.channels, self.config["audio_gain"])
+        except ValueError as e:
+            self.audio_active = False
+            if self.last_state != "audio_error":  # Every block fails the same way.
+                self.status("audio_error", str(e))
+            return
+        stamp = message.header.stamp
+        self.keep_audio(stamp.sec * 1000 + stamp.nanosec / 1e6, samples, message.sample_rate)
+        if self.audio_active:
+            self.collect_talk(samples, message.sample_rate)
+        elif self.config["open_mic"]:
+            self.listen(samples, message.sample_rate)
+
+    def keep_audio(self, stamp_ms, samples, rate):
+        """Buffers the block for the next trial's opening, and saves it to the open trial."""
+        self.audio_buffer.append((stamp_ms, samples, rate))
+        while stamp_ms - self.audio_buffer[0][0] > AUDIO_BUFFER_MS:
+            self.audio_buffer.popleft()
+        try:
+            self.trial.audio(stamp_ms, samples, rate)
+        except OSError as e:  # A full disk must not stop guidance.
+            self.get_logger().error(f"Trial audio could not be written: {e}")
+
+    def collect_talk(self, samples, rate):
+        if self.audio_rate and self.audio_rate != rate:
             self.audio_active = False
             self.status("audio_error", "Sample rate changed during recording; record again")
             return
+        self.audio_rate = rate
+        self.audio_chunks.append(samples)
+        if sum(len(a) for a in self.audio_chunks) / rate >= self.config["max_audio_seconds"]:
+            self.finish_audio()
+
+    def listen(self, samples, rate):
+        """Feeds the open mic to the endpointer, deaf while the glasses speak."""
+        if time.monotonic() < self.speaking_until + ECHO_GUARD_SECONDS:
+            self.endpointer.reset()
+            return
+        was_speaking = self.endpointer.speaking
+        utterance = self.endpointer.feed(samples, rate)
+        if self.endpointer.speaking and not was_speaking:
+            self.speech_started = time.monotonic()
+        if utterance is not None:
+            self.utterances.append((utterance, rate, self.speech_started))
+
+    def hear_next(self):
+        """Starts one queued utterance; ASR takes one at a time, and audio_busy holds back plans."""
+        if self.audio_busy or self.audio_active or not self.utterances:
+            return
+        samples, rate, started = self.utterances.popleft()
+        self.audio_busy = True
+        self.pool.submit(self.recognize, mono_to_wav(samples, rate), started)
+
+    def recognize(self, wav, started):
         try:
-            self.audio_rate = message.sample_rate
-            self.audio_chunks.append(
-                pcm32_to_mono(message.data, message.channels, self.config["audio_gain"])
+            self.messages.put(("heard", started, self.client.transcribe(wav)))
+        except Exception as e:
+            LOGGER.exception("Transcription failed")
+            self.messages.put(("heard_error", started, str(e)))
+
+    def open_window(self, kind, seconds):
+        self.window = (kind, max(time.monotonic(), self.speaking_until) + seconds)
+
+    def on_heard(self, started, result):
+        """Decides what one open-mic transcript asks for; only a discard leaves no trace."""
+        text = result["text"]
+        window = self.window[0] if self.window and started <= self.window[1] else None
+        command, rest = interpret(text, self.task, window)
+        if command == "discard" or is_echo(text, self.last_tts):
+            self.audio_busy = False
+            self.get_logger().debug(f"Discarded: {text!r}")
+            return
+        self.window = None
+        if command == "classify":
+            last = self.task.last
+            self.pool.submit(
+                self.classify,
+                self.task.epoch,
+                text,
+                rest,
+                self.task.goal or "",
+                self.task.state,
+                last["instruction"] if last else "",
             )
-            if (
-                sum(len(a) for a in self.audio_chunks) / self.audio_rate
-                >= self.config["max_audio_seconds"]
-            ):
-                self.finish_audio()
-        except ValueError as e:
-            self.audio_active = False
-            self.status("audio_error", str(e))
+            return  # audio_busy stays set, so no plan takes the model first.
+        self.audio_busy = False
+        if command == "listen":
+            self.open_window("goal" if window == "goal" else "aria", ARIA_WINDOW_SECONDS)
+        self.act(command, rest, text, command)
+
+    def classify(self, epoch, text, rest, goal, state, instruction):
+        try:
+            result = self.client.intent(rest, goal, state, instruction)
+            self.messages.put(("intent", epoch, (text, rest, result["label"])))
+        except Exception as e:
+            LOGGER.exception("Intent classification failed")
+            self.messages.put(("intent_error", epoch, (text, str(e))))
+
+    def on_intent(self, epoch, text, rest, label):
+        if epoch != self.task.epoch or not self.task.active:
+            return  # The task moved on while the model ran.
+        if label is None:
+            self.act("say", SAY_SORRY, text, "unclear")
+            return
+        command, reply = route(label, rest, self.task)
+        self.act(command, reply, text, label)
+
+    def act(self, command, text, heard, label):
+        """Carries out a command from speech and records what was heard.
+
+        Args:
+            command: from intent.interpret or intent.route.
+            text: the command's words: a goal, a reply, or the line to say.
+            heard: the whole transcript.
+            label: the command or the classifier's label, kept with the transcript.
+        """
+        self.last_heard = heard
+        self.transcript_pub.publish(String(data=heard))
+        self.record("transcript", text=heard, intent=label)
+        self.voice_turn = True
+        try:
+            if command == "start":
+                self.start(text)
+            elif command == "ask_goal":
+                self.say(SAY_ASK_GOAL)
+                self.open_window("goal", GOAL_WINDOW_SECONDS)
+            elif command == "say":
+                self.say(text)
+            elif command == "feedback":
+                self.task.abandon_plan(self.task.epoch)
+                self.held_plan = None
+                self.say(SAY_OKAY)
+                self.reply(text)
+            elif command == "repeat":
+                if not self.held_plan:  # The instruction about to be spoken is the newer one.
+                    self.repeat()
+            elif command == "cancel":
+                self.cancel()
+            elif command == "finish":
+                self.finish()
+            elif command == "confirm":
+                self.confirm()
+            elif command == "note":
+                self.note(text)
+        finally:
+            self.voice_turn = False
+        if command in {"none", "listen", "say", "ask_goal"} and self.last_state is not None:
+            self.status(self.last_state, self.last_detail)  # Pushes `heard` to the console.
+
+    def say(self, text):
+        self.publish_tts(text)
+        self.record("tts", text=text, repeat=False)
+
+    def speech_pending(self):
+        """True while speech may change what a finished plan should say."""
+        if self.utterances or self.audio_busy:
+            return True
+        return (
+            self.endpointer.speaking
+            and time.monotonic() - self.held_since < HOLD_FOR_SPEECH_SECONDS
+        )
+
+    def accept_plan(self, epoch, payload):
+        if epoch != self.task.epoch:
+            return
+        if payload["client_roundtrip_ms"] > self.config["max_result_age_seconds"] * 1000:
+            self.task.fail_plan(epoch)
+            self.record("tts_suppressed", text=payload["instruction"], reason="stale")
+            self.status("stale", "Result took too long; say next for a fresh observation")
+        elif self.task.finish_plan(epoch, payload):
+            self.record("plan_result", **payload)
+            self.speak(payload)
+
+    def release_held_plan(self):
+        if self.held_plan and not self.speech_pending() and time.monotonic() >= self.speaking_until:
+            epoch, payload = self.held_plan
+            self.held_plan = None
+            self.accept_plan(epoch, payload)
 
     def finish_audio(self):
         self.audio_active = False
@@ -405,18 +611,35 @@ class GuidanceNode(Node):
             if kind == "console":
                 self.console_command(payload)
                 continue
+            if kind == "heard":
+                self.on_heard(epoch, payload)  # `epoch` carries when the speech started.
+                continue
+            if kind == "heard_error":
+                self.audio_busy = False
+                self.record("error", text=payload)
+                continue
+            if kind == "intent":
+                self.audio_busy = False
+                self.on_intent(epoch, *payload)
+                continue
+            if kind == "intent_error":
+                self.audio_busy = False
+                if epoch == self.task.epoch and self.task.active:
+                    self.record("error", text=payload[1])
+                    self.act("say", SAY_SORRY, payload[0], "unclear")
+                continue
             if kind in {"plan", "plan_error"}:
                 self.planning = False
             if epoch != self.task.epoch:
                 continue
             if kind == "plan":
-                if payload["client_roundtrip_ms"] > self.config["max_result_age_seconds"] * 1000:
-                    self.task.fail_plan(epoch)
-                    self.record("tts_suppressed", text=payload["instruction"], reason="stale")
-                    self.status("stale", "Result took too long; say next for a fresh observation")
-                elif self.task.finish_plan(epoch, payload):
-                    self.record("plan_result", **payload)
-                    self.speak(payload)
+                # The open mic can overlap a plan: speech may replace it, and speech is not cut off.
+                self.held_since = time.monotonic()
+                wait = self.speech_pending() or time.monotonic() < self.speaking_until
+                if self.config["open_mic"] and wait:
+                    self.held_plan = (epoch, payload)
+                else:
+                    self.accept_plan(epoch, payload)
             elif kind == "plan_error":
                 self.task.fail_plan(epoch)
                 self.record("error", text=payload)
@@ -430,9 +653,15 @@ class GuidanceNode(Node):
                 self.last_heard = text
                 self.record("transcript", text=text, duration_ms=payload.get("duration_ms"))
                 if text:
-                    self.reply(text)
+                    self.voice_turn = True
+                    try:
+                        self.reply(text)
+                    finally:
+                        self.voice_turn = False
                 else:
                     self.status("silence", "No speech recognized; record again")
+        self.hear_next()
+        self.release_held_plan()
         self.plan_if_ready()
         if (
             self.audio_active

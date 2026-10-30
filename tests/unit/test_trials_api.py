@@ -155,9 +155,9 @@ def test_captions_follow_the_timeline(app):
     response = client.get("/api/trials/20261029T120000Z_ab/01_120001/captions.vtt")
     assert response.status_code == 200 and response.headers["content-type"].startswith("text/vtt")
     assert response.text.strip().split("\n\n")[1:] == [
-        "00:00:00.000 --> 00:00:01.500\nGoal: Clear the mat",  # 0.5 s gap: held 1.5 s.
-        "00:00:00.500 --> 00:00:06.500\nGuide: Pick up the &lt;red> cup &amp; go.",  # Capped.
-        "00:00:11.000 --> 00:00:12.500\nOperator: done",  # 1 s gap: held 1.5 s.
+        "00:00:00.000 --> 00:00:01.500\nHuman: Clear the mat",  # 0.5 s gap: held 1.5 s.
+        "00:00:00.500 --> 00:00:06.500\nSystem: Pick up the &lt;red> cup &amp; go.",  # Capped.
+        "00:00:11.000 --> 00:00:12.500\nHuman: done",  # 1 s gap: held 1.5 s.
         "00:00:12.000 --> 00:00:18.000\nTrial ended: completed",
     ]
     # Closed trial: cached in the folder next to video.mp4, for VLC.
@@ -166,6 +166,17 @@ def test_captions_follow_the_timeline(app):
     assert (
         client.get("/api/trials/20261029T120000Z_ab/01_120001/captions.vtt").text == response.text
     )
+
+
+def test_a_spoken_reply_is_captioned_once(app):
+    client, folders, _ = app
+    events = [
+        {"t_ms": 1000, "kind": "transcript", "text": "Aria, next"},
+        {"t_ms": 1100, "kind": "reply", "text": "Aria, next", "voice": True},
+    ]
+    (folders["live"] / "guidance.jsonl").write_text("\n".join(map(json.dumps, events)) + "\n")
+    text = client.get("/api/trials/20261029T120000Z_ab/01_120001/captions.vtt").text
+    assert text.count("Human: Aria, next") == 1
 
 
 def test_trial_without_frames_has_no_captions(app):

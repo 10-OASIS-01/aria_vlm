@@ -46,6 +46,15 @@ class Turn(StrictModel):
     text: str = Field(max_length=1500)
 
 
+class IntentRequest(StrictModel):
+    """One utterance to label; the caller (guidance_node) owns the task state."""
+
+    text: str = Field(min_length=1, max_length=1500)
+    goal: str = Field(default="", max_length=1500)
+    state: str = Field(default="", max_length=40)
+    instruction: str = Field(default="", max_length=1500)
+
+
 class PlanV1(Window):
     """Stateless plan: the caller owns the goal and dialogue history."""
 

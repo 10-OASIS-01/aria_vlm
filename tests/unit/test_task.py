@@ -69,6 +69,27 @@ def test_feedback_refused_while_planning():
     assert not task.feedback("next")
 
 
+def test_abandoned_plan_accepts_feedback_and_its_result_is_dropped():
+    task = Task()
+    task.start("Clear the mat")
+    epoch, _, _ = task.begin_plan()
+    task.abandon_plan(epoch)
+    assert task.feedback("the blue one") and task.state == "ready"
+    assert not task.finish_plan(epoch, {"status": "instruction", "instruction": "Go."})
+    assert task.history == [{"role": "user", "text": "the blue one"}]
+
+
+def test_abandon_ignores_another_epoch_or_no_plan():
+    task = planned()
+    task.abandon_plan(task.epoch)
+    assert task.state == "awaiting_feedback"
+    task.start("Stack the cups")
+    old = task.epoch - 1
+    task.begin_plan()
+    task.abandon_plan(old)
+    assert task.state == "planning"
+
+
 def test_history_is_capped():
     task = planned()
     for i in range(MAX_HISTORY):
@@ -88,6 +109,9 @@ def test_history_is_capped():
         ("再说一遍", ("repeat", "再说一遍")),
         ("goal: stack the cups", ("goal", "stack the cups")),
         ("Note: the cup slipped", ("note", "the cup slipped")),
+        ("Trial end.", ("finish", "Trial end.")),
+        ("end trial", ("finish", "end trial")),
+        ("goal end", ("finish", "goal end")),
         ("下一步", ("feedback", "下一步")),
         ("The pen is behind the box", ("feedback", "The pen is behind the box")),
     ],
