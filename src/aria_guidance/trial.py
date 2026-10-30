@@ -8,6 +8,7 @@
     video.mp4       frames/ and audio.pcm encoded on first view by the backend, timed by the stamps
     video.vtt       captions for video.mp4 from guidance.jsonl (VLC loads it with the video)
     review.json     verdict and notes; only the backend's Trials page writes it
+    latency.json    per-step timing; only scripts/trial_latency.py writes it
 
 TrialRecorder is the node half; the functions below it serve the workbench.
 """
@@ -15,6 +16,7 @@ TrialRecorder is the node half; the functions below it serve the workbench.
 import json
 import os
 import re
+import statistics
 import threading
 import time
 from datetime import datetime
@@ -148,6 +150,8 @@ class TrialRecorder:
             self.body["steps"] += 1
             self.latencies.append(fields.get("client_roundtrip_ms", 0.0))
             write_json(self.folder / "trial.json", self.body)  # Open trials show their steps.
+        elif kind == "tts_suppressed" and "client_roundtrip_ms" in fields:
+            self.latencies.append(fields["client_roundtrip_ms"])  # A stale plan's wait counts too.
 
     def close(self, outcome):
         """Ends the trial: completed, cancelled, replaced or aborted."""
@@ -246,6 +250,98 @@ def write_review(folder, verdict, notes):
     review = {"verdict": verdict, "notes": notes, "updated_at": time.time()}
     write_json(folder / "review.json", review)
     return review
+
+
+def rounded(value):
+    return None if value is None else round(value, 1)
+
+
+def difference(later, earlier):
+    return None if later is None or earlier is None else round(later - earlier, 1)
+
+
+def trial_latency(folder):
+    """Each latency of one trial up to publishing TTS; what it did not record is None.
+
+    Not audible TTS: the glasses give no playback signal, and in the first recorded trial their
+    microphones did not pick up the speaker, so audio.pcm cannot show it either.
+
+    Returns:
+        {id, goal, steps, speech, goal_to_tts_from_start_ms, goal_to_tts_from_endpoint_ms,
+        summary}. A step is one plan_request and its result. summary gives the mean, median and
+        max of each step field.
+    """
+    detail = read_trial(folder)
+    steps, speech, goal_speech = [], [], None
+    step, instruction_due = None, False
+    for event in detail["events"]:
+        kind = event["kind"]
+        if kind == "transcript":
+            if event.get("voice"):
+                goal_speech = event
+            speech.append(
+                {
+                    "text": event.get("text"),
+                    "stt_ms": rounded(event.get("duration_ms")),
+                    "stt_roundtrip_ms": rounded(event.get("client_roundtrip_ms")),
+                    "speech_started_ms": event.get("speech_started_ms"),
+                    "speech_endpointed_ms": event.get("speech_endpointed_ms"),
+                }
+            )
+        elif kind == "plan_request":
+            frames = event.get("frames") or [None]
+            step = {
+                "t_ms": event["t_ms"],
+                "stale": False,
+                "observation_span_ms": difference(frames[-1], frames[0]),
+                "frame_age_ms": difference(event["t_ms"], frames[-1]),
+                "http_ms": None,
+                "server_total_ms": None,
+                "model_ms": None,
+                "first_token_ms": None,
+                "publish_ms": None,
+                "tts_ms": None,
+            }
+            steps.append(step)
+            instruction_due = False
+        elif kind in {"plan_result", "tts_suppressed"} and step:
+            if "client_roundtrip_ms" in event:
+                timings = event.get("timings") or {}
+                step.update(
+                    http_ms=rounded(event["client_roundtrip_ms"]),
+                    server_total_ms=rounded(timings.get("server_total_ms")),
+                    model_ms=rounded(timings.get("model_ms")),
+                    first_token_ms=rounded(timings.get("time_to_first_token_ms")),
+                    stale=kind == "tts_suppressed",
+                )
+            instruction_due = kind == "plan_result"
+        elif kind == "tts" and instruction_due:
+            step.update(publish_ms=difference(event["t_ms"], step["t_ms"]), tts_ms=event["t_ms"])
+            instruction_due = False
+
+    first_tts = next((s["tts_ms"] for s in steps if s["tts_ms"] is not None), None)
+    goal_speech = goal_speech or {}
+    fields = [k for k in (steps[0] if steps else {}) if k not in {"t_ms", "stale", "tts_ms"}]
+    summary = {}
+    for name in fields:
+        values = [s[name] for s in steps if s[name] is not None]
+        if values:
+            summary[name] = {
+                "mean": round(statistics.mean(values), 1),
+                "median": round(statistics.median(values), 1),
+                "max": max(values),
+            }
+    return {
+        "id": detail["trial"].get("id"),
+        "goal": detail["trial"].get("goal"),
+        "steps": steps,
+        "speech": speech,
+        "goal_to_tts_from_start_ms": difference(first_tts, goal_speech.get("speech_started_ms")),
+        "goal_to_tts_from_endpoint_ms": difference(
+            first_tts, goal_speech.get("speech_endpointed_ms")
+        ),
+        "summary": summary,
+    }
 
 
 CAPTIONS = {

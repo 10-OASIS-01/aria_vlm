@@ -9,6 +9,7 @@ from conftest import trials, wait_for
 from test_guidance import heard, kinds
 
 from aria_guidance.intent import SAY_CANCEL, SAY_START
+from aria_guidance.trial import trial_captions
 
 
 @pytest.fixture
@@ -43,7 +44,7 @@ def test_chatter_does_nothing_and_leaves_no_trace(probe, node, camera, backend, 
     assert node.task.active and backend.engine.intent_calls == []
     assert len(backend.engine.calls) == calls
     [(_, events, _)] = trials(tmp_path)
-    assert not [e for e in events if e["kind"] == "transcript"]
+    assert not [e for e in events if e["kind"] == "transcript" and not e.get("voice")]
 
 
 def test_start_with_goal_opens_a_trial_without_the_model(
@@ -108,7 +109,7 @@ def test_labels_become_feedback_with_the_raw_words(probe, node, camera, backend,
     assert backend.engine.intent_calls[0]["text"] == "I can't find it"
     assert backend.engine.intent_calls[0]["goal"] == "pick up the pen"
     [(_, events, _)] = trials(tmp_path)
-    [transcript] = [e for e in events if e["kind"] == "transcript"]
+    [transcript] = [e for e in events if e["kind"] == "transcript" and not e.get("voice")]
     assert transcript["text"] == "Aria, I can't find it" and transcript["intent"] == "help"
     [reply] = [e for e in events if e["kind"] == "reply"]
     assert reply["voice"] is True
@@ -296,6 +297,22 @@ def test_bare_next_asks_for_a_step_without_aria(probe, node, camera, backend, mi
     assert backend.engine.intent_calls == []
 
 
+def trial_folder(tmp_path):
+    return next((tmp_path / "backend" / "guidance").glob("*/trials/*"))
+
+
+def test_a_hold_to_talk_goal_keeps_its_timing_in_the_new_trial(probe, node, camera, tmp_path):
+    timing = {"duration_ms": 120.0, "client_roundtrip_ms": 150.0, "speech_started_ms": 1000.0}
+    result = {"text": "goal: pick up the pen", "timing": timing}
+    node.messages.put(("transcript", node.task.epoch, result))
+    heard(probe, node, 1)
+    [(trial, events, _)] = trials(tmp_path)
+    assert trial["goal"] == "pick up the pen"
+    [said] = [e for e in events if e["kind"] == "transcript"]
+    assert said["voice"] and said["text"] == "goal: pick up the pen"
+    assert said["duration_ms"] == 120.0 and said["speech_started_ms"] == 1000.0
+
+
 def audio_block(probe_pub, level, stamp_ms, samples=1600):
     message = Audio()
     message.header.stamp.sec = int(stamp_ms // 1000)
@@ -328,10 +345,18 @@ def test_microphone_to_trial_end_to_end(probe, node, executor, camera, tmp_path,
 
     play(0.001, 5)  # Room noise.
     assert heard_wavs == []
+    speech_start = now
     play(0.02, 6)  # Speech: 0.6 s.
     play(0.001, 13)  # 1.3 s of trailing quiet ends it.
+    speech_end = now
     wait_for(lambda: len(heard_wavs) == 1)
     assert heard(probe, node, 1) == "Pick up the pen."
+    [goal_transcript] = [e for e in trials(tmp_path)[0][1] if e["kind"] == "transcript"]
+    assert goal_transcript["voice"] and goal_transcript["client_roundtrip_ms"] >= 0
+    assert goal_transcript["speech_started_ms"] == pytest.approx(speech_start, abs=1)
+    # The endpoint is the block that completed 1.2 s of quiet, one block before the last.
+    assert goal_transcript["speech_endpointed_ms"] == pytest.approx(speech_end - 100, abs=1)
+    assert "trial start" not in trial_captions(trial_folder(tmp_path)).read_text()
     # With the guard on, speech while the glasses talk must not become an utterance.
     node.config["open_mic_deaf_while_speaking"] = True
     node.speaking_until = time.monotonic() + 10

@@ -118,7 +118,7 @@ Output includes:
 | `received_at_ms`, `responded_at_ms` | Backend wall clock stamps |
 | `tts_published` event | ROS host timestamp when text is published to the TTS topic |
 
-The ten-second observation window, model load time, STT latency, and speaker playback duration are separate quantities. TTS publish time is **not** the first audible sample or playback completion. Aria provides no playback acknowledgement through the current four-topic interface. Full spoken-goal-to-audible-instruction latency requires a hardware recording and synchronized clocks. Do not label a replay's HTTP timing as wearable end-to-end latency.
+The ten-second observation window, model load time, STT latency, and speaker playback duration are separate quantities. TTS publish time is **not** the first audible sample or playback completion. Aria provides no playback acknowledgement through the current four-topic interface. Full spoken-goal-to-audible-instruction latency requires a hardware recording and synchronized clocks; the [hardware checklist](hardware-checklist.md#evidence-to-retain) gives the procedure and `scripts/trial_latency.py` reports the part up to the TTS publish. Do not label a replay's HTTP timing as wearable end-to-end latency.
 
 ## Storage
 

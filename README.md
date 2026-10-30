@@ -258,6 +258,7 @@ data/sessions/<session>/trials/03_142211/
 ├── audio.pcm        the glasses' microphones, mono int16, from about 10 s before the goal
 ├── video.mp4        built from frames/ and audio.pcm on first view, timed by the capture stamps
 ├── video.vtt        captions of everything said and noted, which VLC also shows
+├── latency.json     per-step timing, written by scripts/trial_latency.py
 └── review.json      the verdict and notes from the Trials view
 ```
 

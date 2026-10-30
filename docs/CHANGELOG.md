@@ -2,6 +2,26 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-30 — Trial latency records and report (commit "Record speech timing in trials and report latency")
+
+The hardware checklist asks for each latency separately. Trials kept HTTP and model times, but dropped open-mic STT timing, kept no speech times, and left a spoken goal's transcript out of the trial it opened.
+
+**Changed behavior**
+- `transcript` events have `duration_ms`, `client_roundtrip_ms`, `speech_started_ms` and `speech_endpointed_ms`, on the open mic and on push-to-talk.
+- A spoken goal's transcript is written to the trial it opens, with `voice: true`, so the timeline and captions do not show the goal twice. A replaced trial still gets its copy.
+- A stale plan's `tts_suppressed` has `client_roundtrip_ms` and `timings`, and it counts in `latency_ms` in `trial.json`. `steps` does not change.
+
+**Added**
+- `scripts/trial_latency.py` prints the latencies of each step up to the TTS publish and writes `latency.json` in the trial folder. It reads older trials too; what they did not record is empty.
+- The hardware checklist gives a phone-recording procedure for time to audible TTS.
+
+**Measured** (`20261030T202050Z_cec25f87/trials/01_142231`, the one trial with `audio.pcm`)
+- Time to audible TTS cannot be read from `audio.pcm`. After the 21-word instruction was published, the microphone stayed at room level and transcribed as noise. The only loud sound in those 9 s was a person, at 38–41 s. A loudness detector reported that person as a 9560 ms speaker delay, so it is not included.
+- One trial only; nothing confirms the instruction played in that trial.
+
+**Upgrade notes**
+- Restart guidance_node for the new fields. The backend needs no restart for this change, because its Trials page ignores fields it does not use.
+
 ## 2026-10-30 — Fix missed speech and show process logs in the console (commit "Fix missed speech and show process logs in the console")
 
 The first trial on the glasses (`01_142231`) lost most of its speech. Replaying its `audio.pcm` showed the words were lost before any text existed, or lost their "Aria" inside Whisper, so the wake word stays and the model still can't end a trial. The console also gave no view of the processes it starts.

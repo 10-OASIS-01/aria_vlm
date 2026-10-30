@@ -110,7 +110,10 @@ class GuidanceNode(Node):
         self.endpointer = Endpointer(
             self.config["open_mic_threshold"], silence_s=self.config["open_mic_silence_seconds"]
         )
-        self.utterances = deque(maxlen=MAX_QUEUED_UTTERANCES)  # (samples, rate, started)
+        # (samples, rate, started, stamps)
+        self.utterances = deque(maxlen=MAX_QUEUED_UTTERANCES)
+        self.speech_started_ms, self.speech_last_ms = None, None  # Host stamps of the mic blocks.
+        self.heard_timing = {}  # Of the one utterance in flight; audio_busy holds back the next.
         self.speech_started = 0.0
         self.window = None  # (kind, deadline): speech needing no "Aria"; see intent.interpret.
         self.held_plan, self.held_since = None, 0.0  # (epoch, result) waiting for speech to end.
@@ -257,6 +260,8 @@ class GuidanceNode(Node):
             )
         except OSError as e:
             self.get_logger().error(f"Trial folder could not be written: {e}")
+        if self.voice_turn:  # The transcript was recorded before this trial existed.
+            self.record("transcript", text=self.last_heard, voice=True, **self.heard_timing)
         self.status("ready", goal)
 
     def reply(self, text):
@@ -477,11 +482,12 @@ class GuidanceNode(Node):
                 self.status("audio_error", str(e))
             return
         stamp = message.header.stamp
-        self.keep_audio(stamp.sec * 1000 + stamp.nanosec / 1e6, samples, message.sample_rate)
+        stamp_ms = stamp.sec * 1000 + stamp.nanosec / 1e6
+        self.keep_audio(stamp_ms, samples, message.sample_rate)
         if self.audio_active:
-            self.collect_talk(samples, message.sample_rate)
+            self.collect_talk(samples, message.sample_rate, stamp_ms)
         elif self.config["open_mic"]:
-            self.listen(samples, message.sample_rate)
+            self.listen(samples, message.sample_rate, stamp_ms)
 
     def keep_audio(self, stamp_ms, samples, rate):
         """Buffers the block for the next trial's opening, and saves it to the open trial."""
@@ -493,17 +499,20 @@ class GuidanceNode(Node):
         except OSError as e:  # A full disk must not stop guidance.
             self.get_logger().error(f"Trial audio could not be written: {e}")
 
-    def collect_talk(self, samples, rate):
+    def collect_talk(self, samples, rate, stamp_ms):
         if self.audio_rate and self.audio_rate != rate:
             self.audio_active = False
             self.status("audio_error", "Sample rate changed during recording; record again")
             return
         self.audio_rate = rate
+        if not self.audio_chunks:
+            self.speech_started_ms = stamp_ms
+        self.speech_last_ms = stamp_ms + len(samples) * 1000 / rate
         self.audio_chunks.append(samples)
         if sum(len(a) for a in self.audio_chunks) / rate >= self.config["max_audio_seconds"]:
             self.finish_audio()
 
-    def listen(self, samples, rate):
+    def listen(self, samples, rate, stamp_ms):
         """Feeds the open mic to the endpointer."""
         if self.deaf(time.monotonic()):
             self.endpointer.reset()
@@ -512,20 +521,37 @@ class GuidanceNode(Node):
         utterance = self.endpointer.feed(samples, rate)
         if self.endpointer.speaking and not was_speaking:
             self.speech_started = time.monotonic()
+            self.speech_started_ms = stamp_ms
         if utterance is not None:
-            self.utterances.append((utterance, rate, self.speech_started))
+            # The endpoint comes after silence_s of trailing quiet, unless max_s cut the speech.
+            stamps = {
+                "speech_started_ms": self.speech_started_ms,
+                "speech_endpointed_ms": stamp_ms + len(samples) * 1000 / rate,
+            }
+            self.utterances.append((utterance, rate, self.speech_started, stamps))
 
     def hear_next(self):
         """Starts one queued utterance; ASR takes one at a time, and audio_busy holds back plans."""
         if self.audio_busy or self.audio_active or not self.utterances:
             return
-        samples, rate, started = self.utterances.popleft()
+        samples, rate, started, stamps = self.utterances.popleft()
         self.audio_busy = True
-        self.pool.submit(self.recognize, mono_to_wav(samples, rate), started)
+        self.pool.submit(self.recognize, mono_to_wav(samples, rate), started, stamps)
 
-    def recognize(self, wav, started):
+    def timed_transcribe(self, wav, stamps):
+        """Transcribes, adding the `timing` the trial keeps with the transcript."""
+        started = time.monotonic()
+        result = self.client.transcribe(wav)
+        result["timing"] = {
+            **stamps,
+            "duration_ms": result.get("duration_ms"),
+            "client_roundtrip_ms": (time.monotonic() - started) * 1000,
+        }
+        return result
+
+    def recognize(self, wav, started, stamps):
         try:
-            self.messages.put(("heard", started, self.client.transcribe(wav)))
+            self.messages.put(("heard", started, self.timed_transcribe(wav, stamps)))
         except Exception as e:
             LOGGER.exception("Transcription failed")
             self.messages.put(("heard_error", started, str(e)))
@@ -535,6 +561,7 @@ class GuidanceNode(Node):
 
     def on_heard(self, started, result):
         """Decides what one open-mic transcript asks for; only a discard leaves no trace."""
+        self.heard_timing = result.get("timing", {})
         text = result["text"]
         self.last_language = result.get("language")
         window = self.window[0] if self.window and started <= self.window[1] else None
@@ -595,7 +622,7 @@ class GuidanceNode(Node):
         """
         self.last_heard = heard
         self.transcript_pub.publish(String(data=heard))
-        self.record("transcript", text=heard, intent=label)
+        self.record("transcript", text=heard, intent=label, **self.heard_timing)
         self.log_heard(heard, command, label if label != command else None)
         self.voice_turn = True
         try:
@@ -645,7 +672,13 @@ class GuidanceNode(Node):
             return
         if payload["client_roundtrip_ms"] > self.config["max_result_age_seconds"] * 1000:
             self.task.fail_plan(epoch)
-            self.record("tts_suppressed", text=payload["instruction"], reason="stale")
+            self.record(
+                "tts_suppressed",
+                text=payload["instruction"],
+                reason="stale",
+                client_roundtrip_ms=payload["client_roundtrip_ms"],
+                timings=payload.get("timings"),
+            )
             self.status("stale", "Result took too long; say next for a fresh observation")
         elif self.task.finish_plan(epoch, payload):
             self.record("plan_result", **payload)
@@ -666,11 +699,14 @@ class GuidanceNode(Node):
         wav = mono_to_wav(samples, self.audio_rate)
         epoch = self.task.epoch
         self.audio_busy = True
+        stamps = {
+            "speech_started_ms": self.speech_started_ms,
+            "speech_endpointed_ms": self.speech_last_ms,
+        }
 
         def transcribe():
             try:
-                result = self.client.transcribe(wav)
-                self.messages.put(("transcript", epoch, result))
+                self.messages.put(("transcript", epoch, self.timed_transcribe(wav, stamps)))
             except Exception as e:
                 LOGGER.exception("Transcription failed")
                 self.messages.put(("error", epoch, str(e)))
@@ -728,7 +764,8 @@ class GuidanceNode(Node):
                 text = payload["text"]
                 self.transcript_pub.publish(String(data=text))
                 self.last_heard = text
-                self.record("transcript", text=text, duration_ms=payload.get("duration_ms"))
+                self.heard_timing = payload.get("timing", {})
+                self.record("transcript", text=text, **self.heard_timing)
                 self.last_language = payload.get("language")
                 self.log_heard(text, "hold" if text else "no_words")
                 if text:

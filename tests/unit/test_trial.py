@@ -7,7 +7,7 @@ import pytest
 from PIL import Image
 
 from aria_guidance.frames import BufferedFrame
-from aria_guidance.trial import TrialRecorder, trial_video
+from aria_guidance.trial import TrialRecorder, trial_latency, trial_video
 
 
 def read(folder):
@@ -72,6 +72,99 @@ def test_events_steps_and_latency(tmp_path):
     assert [e["kind"] for e in events] == ["goal", "plan_result", "note", "plan_result", "end"]
     assert trial["steps"] == 2 and trial["latency_ms"] == {"mean": 3000.0, "max": 4000.0}
     assert trial["outcome"] == "completed" and trial["ended_ns"] >= trial["started_ns"]
+
+
+def test_a_stale_plan_counts_as_latency_but_not_as_a_step(tmp_path):
+    recorder = TrialRecorder(tmp_path / "aria", tmp_path / "fallback")
+    recorder.open("Clear the mat", [])
+    folder = recorder.folder
+    recorder.event("plan_result", instruction="Pick up the pen.", client_roundtrip_ms=2000.0)
+    recorder.event("tts_suppressed", text="Too late.", reason="stale", client_roundtrip_ms=9000.0)
+    recorder.event("tts_suppressed", text="Still speaking.")  # A round trip already counted.
+    recorder.close("completed")
+    trial, _ = read(folder)
+    assert trial["steps"] == 1 and trial["latency_ms"] == {"mean": 5500.0, "max": 9000.0}
+
+
+def write_events(tmp_path, events):
+    folder = tmp_path / "trial"
+    folder.mkdir()
+    (folder / "trial.json").write_text(json.dumps({"id": "01", "goal": "Clear the mat"}))
+    (folder / "guidance.jsonl").write_text("".join(json.dumps(e) + "\n" for e in events))
+    return folder
+
+
+def test_latency_pairs_each_request_with_its_result_and_instruction(tmp_path):
+    timings = {"server_total_ms": 900.0, "model_ms": 800.0, "time_to_first_token_ms": 300.0}
+    folder = write_events(
+        tmp_path,
+        [
+            {"t_ms": 1000, "kind": "goal", "text": "Clear the mat"},
+            {
+                "t_ms": 1001,
+                "kind": "transcript",
+                "text": "Aria, trial start, clear the mat",
+                "voice": True,
+                "duration_ms": 120.0,
+                "client_roundtrip_ms": 150.0,
+                "speech_started_ms": 500,
+                "speech_endpointed_ms": 800,
+            },
+            {"t_ms": 1100, "kind": "tts", "text": "Okay."},  # Not an instruction.
+            {"t_ms": 2000, "kind": "plan_request", "frames": [1000, 1900]},
+            {
+                "t_ms": 3000,
+                "kind": "plan_result",
+                "client_roundtrip_ms": 1000.0,
+                "timings": timings,
+            },
+            {"t_ms": 3001, "kind": "tts", "text": "Pick up the pen."},
+            {"t_ms": 4000, "kind": "plan_request", "frames": [3000, 3900]},  # Never answered.
+            {"t_ms": 4100, "kind": "tts", "text": "Okay."},
+            {"t_ms": 5000, "kind": "plan_request", "frames": [4000, 4900]},
+            {
+                "t_ms": 8000,
+                "kind": "tts_suppressed",
+                "reason": "stale",
+                "client_roundtrip_ms": 3000.0,
+            },
+            {"t_ms": 8100, "kind": "tts", "text": "Okay."},
+            {"t_ms": 9000, "kind": "plan_request", "frames": [8000, 8900]},
+            {"t_ms": 9500, "kind": "plan_result", "client_roundtrip_ms": 500.0},
+            {"t_ms": 9501, "kind": "tts_suppressed", "text": "Still speaking."},
+            {"t_ms": 9600, "kind": "tts", "text": "Okay."},
+        ],
+    )
+    latency = trial_latency(folder)
+    answered, unanswered, stale, unspoken = latency["steps"]
+    assert answered["observation_span_ms"] == 900 and answered["frame_age_ms"] == 100
+    assert answered["http_ms"] == 1000.0 and answered["server_total_ms"] == 900.0
+    assert answered["model_ms"] == 800.0 and answered["first_token_ms"] == 300.0
+    assert answered["publish_ms"] == 1001 and not answered["stale"]
+    assert unanswered["http_ms"] is None and unanswered["publish_ms"] is None
+    assert stale["stale"] and stale["http_ms"] == 3000.0 and stale["publish_ms"] is None
+    assert unspoken["http_ms"] == 500.0 and unspoken["publish_ms"] is None
+    assert latency["summary"]["http_ms"] == {"mean": 1500.0, "median": 1000.0, "max": 3000.0}
+    [said] = latency["speech"]
+    assert said["stt_ms"] == 120.0 and said["stt_roundtrip_ms"] == 150.0
+    assert latency["goal_to_tts_from_start_ms"] == 2501  # To the instruction, not to "Okay."
+    assert latency["goal_to_tts_from_endpoint_ms"] == 2201
+
+
+def test_latency_of_a_typed_goal_or_older_trial_leaves_speech_empty(tmp_path):
+    folder = write_events(
+        tmp_path,
+        [
+            {"t_ms": 2000, "kind": "plan_request", "frames": [1000, 1900]},
+            {"t_ms": 3000, "kind": "plan_result", "client_roundtrip_ms": 1000.0},
+            {"t_ms": 3001, "kind": "tts", "text": "Pick up the pen."},
+            {"t_ms": 3500, "kind": "transcript", "text": "done", "intent": "done"},
+        ],
+    )
+    latency = trial_latency(folder)
+    assert latency["steps"][0]["http_ms"] == 1000.0
+    assert latency["speech"][0]["stt_ms"] is None
+    assert latency["goal_to_tts_from_start_ms"] is None
 
 
 @pytest.mark.parametrize("outcome", ["completed", "cancelled", "aborted"])

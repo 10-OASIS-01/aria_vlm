@@ -104,7 +104,7 @@ To close, replace or start a trial, the wake word must be the first word, or fol
 
 **Speech during planning.** A finished plan's instruction is held while an utterance is pending. If the utterance is an action, the instruction is dropped and a new plan runs. If it is not (no wake word, `ignore`), the instruction is spoken.
 
-**What is saved.** The trial record keeps only addressed speech as `transcript` events, with the label in `intent`. Other speech's text goes to the console's microphone card and a debug-level log line, off by default (`--ros-args --log-level guidance_node:=debug`). The card holds the last 20 utterances in memory and readable from `/api/live/state`, and it is not written to disk. The raw audio is different, as below.
+**What is saved.** The trial record keeps only addressed speech as `transcript` events, with the label in `intent`. Each also has `duration_ms` (recognition on the backend), `client_roundtrip_ms` (the HTTP call), `speech_started_ms` and `speech_endpointed_ms` (host time, and on the open mic the endpoint includes the trailing quiet, `open_mic_silence_seconds`). A spoken goal's transcript is in the trial it opens, with `voice: true`, which hides it from the timeline and captions because the goal already shows. `scripts/trial_latency.py` reports these times; see the [hardware checklist](hardware-checklist.md#evidence-to-retain). Other speech's text goes to the console's microphone card and a debug-level log line, off by default (`--ros-args --log-level guidance_node:=debug`). The card holds the last 20 utterances in memory and readable from `/api/live/state`, and it is not written to disk. The raw audio is different, as below.
 
 **Limits**
 
