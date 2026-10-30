@@ -20,7 +20,7 @@ class Settings:
     )
     # aria_node's session folders, where guidance_node writes trials (also .runtime/guidance).
     sessions_dir: Path = field(
-        default_factory=lambda: Path(os.getenv("ARIA_SESSIONS_DIR", "../aria2_ros2/data/aria"))
+        default_factory=lambda: Path(os.getenv("ARIA_SESSIONS_DIR", "../aria2_ros2/data/sessions"))
     )
     # What the console's System row starts: aria2_ros2's workspace, its DDS profile, the test image.
     ros_workspace: Path = field(

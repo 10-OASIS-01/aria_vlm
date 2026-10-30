@@ -10,4 +10,4 @@ guidance_node:
     max_audio_seconds: 20.0
     audio_gain: 16.0
     # aria_node's record.output_dir; trials go into its newest live session.
-    session_root: data/aria
+    session_root: data/sessions

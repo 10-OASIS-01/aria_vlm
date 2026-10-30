@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" role="img" aria-labelledby="title desc" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">One plan request, drawn to scale</title>
+  <desc id="desc">Each request carries 20 frames from the 10 seconds before it, at 2 frames per second. The model then takes a median of 1.17 seconds, with a range from 0.71 to 2.43 seconds, over 34 answered requests in live sessions on October 23 and 24, 2026. Time from the instruction to audible speech was not measured.</desc>
+  <style>
+    .title { font-size: 16px; font-weight: 600; fill: #203b37; }
+    .label { font-size: 13px; fill: #354742; }
+    .strong { font-size: 13px; font-weight: 600; fill: #203b37; }
+    .tick { font-size: 12.5px; fill: #5f6b66; text-anchor: middle; font-variant-numeric: tabular-nums; }
+    .axis { stroke: #cfd8d3; stroke-width: 1; }
+    .zero { stroke: #203b37; stroke-width: 1.5; }
+    .frame { fill: #203b37; }
+    .model { fill: #203b37; }
+    .range { stroke: #203b37; stroke-width: 2; }
+  </style>
+  <rect width="960" height="300" rx="16" fill="#fff"/>
+  <text class="title" x="24" y="38">One plan request, drawn to scale</text>
+
+  <!-- 56 px per second, zero at x=640: -10 s is 80, +5 s is 920 -->
+  <line class="axis" x1="80" y1="210" x2="920" y2="210"/>
+  <line class="axis" x1="80" y1="210" x2="80" y2="216"/><text class="tick" x="80" y="234">-10 s</text>
+  <line class="axis" x1="360" y1="210" x2="360" y2="216"/><text class="tick" x="360" y="234">-5 s</text>
+  <line class="axis" x1="920" y1="210" x2="920" y2="216"/><text class="tick" x="920" y="234">+5 s</text>
+  <line class="axis" x1="780" y1="210" x2="780" y2="216"/><text class="tick" x="780" y="234">+2.5 s</text>
+  <line class="zero" x1="640" y1="72" x2="640" y2="216"/><text class="tick" x="640" y="234">Request sent</text>
+
+  <!-- 20 frames, 0.5 s apart -->
+  <text class="strong" x="80" y="118">20 frames sent</text>
+  <text class="label" x="184" y="118">The last 10 s of camera, 2 per second</text>
+  <g class="frame">
+    <circle cx="94" cy="146" r="5"/><circle cx="122" cy="146" r="5"/><circle cx="150" cy="146" r="5"/><circle cx="178" cy="146" r="5"/><circle cx="206" cy="146" r="5"/>
+    <circle cx="234" cy="146" r="5"/><circle cx="262" cy="146" r="5"/><circle cx="290" cy="146" r="5"/><circle cx="318" cy="146" r="5"/><circle cx="346" cy="146" r="5"/>
+    <circle cx="374" cy="146" r="5"/><circle cx="402" cy="146" r="5"/><circle cx="430" cy="146" r="5"/><circle cx="458" cy="146" r="5"/><circle cx="486" cy="146" r="5"/>
+    <circle cx="514" cy="146" r="5"/><circle cx="542" cy="146" r="5"/><circle cx="570" cy="146" r="5"/><circle cx="598" cy="146" r="5"/><circle cx="626" cy="146" r="5"/>
+  </g>
+
+  <!-- Model: median 1.17 s, range 0.71 to 2.43 s -->
+  <text class="strong" x="652" y="72">Model time</text>
+  <text class="label" x="652" y="92">Median 1.17 s, range 0.71 to 2.43 s</text>
+  <rect class="model" x="640" y="130" width="65.5" height="32" rx="4"/>
+  <line class="range" x1="679.8" y1="178" x2="776.1" y2="178"/>
+  <line class="range" x1="679.8" y1="172" x2="679.8" y2="184"/>
+  <line class="range" x1="776.1" y1="172" x2="776.1" y2="184"/>
+  <text class="label" x="788" y="182">Range</text>
+  <text class="label" x="716" y="151">Median</text>
+
+  <text class="label" x="24" y="266">34 answered plan requests, live sessions October 23 to 24, 2026. Frame age on arrival: median 0.36 s.</text>
+  <text class="label" x="24" y="285">Time from the instruction to audible speech was not measured.</text>
+</svg>

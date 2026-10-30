@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 500" role="img" aria-labelledby="title desc" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">The seven setup steps, by the machine each runs on</title>
+  <desc id="desc">On the GPU workstation: 1 install the backend, 2 get the model weights, 3 start the backend. On the ROS host: 4 build the Aria workspace, 5 add the guidance node, 6 pair the glasses. In the browser: 7 open the console and run the walkthrough. Each step lists the check that shows it worked.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#203b37"/></marker>
+  </defs>
+  <style>
+    .lane { fill: #f5f7f6; stroke: #cfd8d3; }
+    .lane-name { font-size: 15px; font-weight: 600; fill: #203b37; }
+    .lane-note { font-size: 13px; fill: #5f6b66; }
+    .step { fill: #fff; stroke: #203b37; stroke-width: 1.5; }
+    .number { fill: #203b37; }
+    .digit { font-size: 13px; font-weight: 600; fill: #fff; text-anchor: middle; }
+    .name { font-size: 15px; font-weight: 600; fill: #203b37; }
+    .check { font-size: 12.5px; fill: #4c5a55; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; fill: #203b37; }
+    .flow { stroke: #203b37; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+  </style>
+  <rect width="960" height="500" rx="16" fill="#fff"/>
+
+  <!-- GPU workstation -->
+  <rect class="lane" x="24" y="24" width="912" height="140" rx="12"/>
+  <text class="lane-name" x="44" y="50">GPU workstation</text>
+  <rect class="step" x="44" y="62" width="276" height="86" rx="8"/>
+  <circle class="number" cx="66" cy="84" r="12"/><text class="digit" x="66" y="89">1</text>
+  <text class="name" x="86" y="89">Install the backend</text>
+  <text class="check" x="58" y="115">Check: the venv installs and .env</text>
+  <text class="check" x="58" y="133">has this machine's paths</text>
+  <rect class="step" x="342" y="62" width="276" height="86" rx="8"/>
+  <circle class="number" cx="364" cy="84" r="12"/><text class="digit" x="364" y="89">2</text>
+  <text class="name" x="384" y="89">Get the model weights</text>
+  <text class="check" x="356" y="115">Check: the folder holds config.json</text>
+  <text class="check" x="356" y="133">and all four safetensors shards</text>
+  <rect class="step" x="640" y="62" width="276" height="86" rx="8"/>
+  <circle class="number" cx="662" cy="84" r="12"/><text class="digit" x="662" y="89">3</text>
+  <text class="name" x="682" y="89">Start the backend</text>
+  <text class="check" x="654" y="115">Check:</text>
+  <text class="code" x="699" y="115">/api/ready</text>
+  <text class="check" x="654" y="133">returns HTTP 200</text>
+  <path class="flow" d="M320 105H342"/>
+  <path class="flow" d="M618 105H640"/>
+
+  <!-- ROS host -->
+  <rect class="lane" x="24" y="180" width="912" height="140" rx="12"/>
+  <text class="lane-name" x="44" y="206">ROS host</text>
+  <text class="lane-note" x="122" y="206">Can be the GPU workstation</text>
+  <rect class="step" x="44" y="218" width="276" height="86" rx="8"/>
+  <circle class="number" cx="66" cy="240" r="12"/><text class="digit" x="66" y="245">4</text>
+  <text class="name" x="86" y="245">Build the Aria workspace</text>
+  <text class="check" x="58" y="271">Check:</text>
+  <text class="code" x="103" y="271">ros2 pkg prefix aria_driver</text>
+  <text class="check" x="58" y="289">prints a path</text>
+  <rect class="step" x="342" y="218" width="276" height="86" rx="8"/>
+  <circle class="number" cx="364" cy="240" r="12"/><text class="digit" x="364" y="245">5</text>
+  <text class="name" x="384" y="245">Add the guidance node</text>
+  <text class="check" x="356" y="271">Check:</text>
+  <text class="code" x="401" y="271">curl .../api/ready</text>
+  <text class="check" x="356" y="289">from this machine returns 200</text>
+  <rect class="step" x="640" y="218" width="276" height="86" rx="8"/>
+  <circle class="number" cx="662" cy="240" r="12"/><text class="digit" x="662" y="245">6</text>
+  <text class="name" x="682" y="245">Pair the glasses</text>
+  <text class="check" x="654" y="271">Check:</text>
+  <text class="code" x="699" y="271">aria_device info</text>
+  <text class="check" x="654" y="289">lists them</text>
+  <path class="flow" d="M320 261H342"/>
+  <path class="flow" d="M618 261H640"/>
+  <path class="flow" d="M778 148V164C778 172 770 172 760 172H320C312 172 304 180 304 188V218"/>
+
+  <!-- Browser -->
+  <rect class="lane" x="24" y="336" width="912" height="140" rx="12"/>
+  <text class="lane-name" x="44" y="362">Browser</text>
+  <rect class="step" x="44" y="374" width="872" height="86" rx="8"/>
+  <circle class="number" cx="66" cy="396" r="12"/><text class="digit" x="66" y="401">7</text>
+  <text class="name" x="86" y="401">Open the console and run the Walkthrough</text>
+  <text class="check" x="58" y="427">Check: one practice trial on the test camera reaches Complete and appears in Trials.</text>
+  <text class="check" x="58" y="445">Then choose Glasses in the System row and set a real goal.</text>
+  <path class="flow" d="M778 304V320C778 328 770 328 760 328H480V374"/>
+</svg>

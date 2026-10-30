@@ -38,7 +38,7 @@ class FakeCamera(Node):
         # Wall-clock stamps: guidance_node and the backend both compare frame age to time.time().
         now = time.time_ns()
         msg = Image(height=h, width=w, encoding="rgb8", step=w * 3)
-        msg.data = array.array("B", pixels.tobytes())  # Same packing as aria_ros2.messages.
+        msg.data = array.array("B", pixels.tobytes())  # Same packing as aria_driver.messages.
         msg.header.stamp.sec, msg.header.stamp.nanosec = divmod(now, 10**9)
         # Not aria_node's aria_rgb_optical_frame: the console and trials mark these as test frames.
         msg.header.frame_id = "fake_camera"

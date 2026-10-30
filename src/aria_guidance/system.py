@@ -33,7 +33,7 @@ def ros_services(settings, aria_vlm_root):
             f" && export FASTRTPS_DEFAULT_PROFILES_FILE={shlex.quote(settings.fastdds_profile)}"
         )
     setup += f" && cd {shlex.quote(str(workspace))} && exec "
-    config = shlex.quote(str(workspace / "src/aria_ros2/config/aria.yaml"))
+    config = shlex.quote(str(workspace / "src/aria_driver/config/aria.yaml"))
     image = (
         f" --ros-args -p image_path:={shlex.quote(settings.fake_image)}"
         if settings.fake_image
@@ -45,7 +45,7 @@ def ros_services(settings, aria_vlm_root):
         # The Rerun viewer stays off: with it on, RGB frames are lost (see aria_node docs).
         "glasses": (
             "Aria glasses",
-            setup + "ros2 run aria_ros2 aria_node --ros-args -r __node:=aria "
+            setup + "ros2 run aria_driver aria_node --ros-args -r __node:=aria "
             f"--params-file {config} -p viewer.enable:=false",
         ),
         "test_camera": ("Test camera", setup + f"python {camera}{image}"),

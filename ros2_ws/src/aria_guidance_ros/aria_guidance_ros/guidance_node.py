@@ -52,7 +52,7 @@ class GuidanceNode(Node):
             "max_audio_seconds": 20.0,
             "audio_gain": 16.0,
             # aria_node's record.output_dir, relative to the same working directory.
-            "session_root": "data/aria",
+            "session_root": "data/sessions",
             "fallback_root": str(FALLBACK_ROOT),
         }
         for name, default in defaults.items():
