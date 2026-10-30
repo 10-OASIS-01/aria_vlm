@@ -169,6 +169,8 @@ Everything runs from the **Live** view, numbered in the picture at the top of th
 | 8 | Cancel task | Ends the task. Takes a second press. | |
 | 9 | Camera strip | Names the source (Aria glasses or TEST CAMERA) with its frame rate and age. | |
 
+Below the camera, **What the microphone hears** lists the last 20 utterances with what happened to each, including speech that was ignored. Its label says whether the system is listening or deaf because the glasses are speaking. Speech said while deaf never gets a transcript, so it does not appear in the list.
+
 ![A task moves from No goal yet through Observing and Thinking to Act on the instruction, and back, until the band asks Finished?](docs/img/task-loop.svg)
 
 The words in the boxes are what the band says, with the matching state from `/guidance/state` below them. Wait about 10 seconds after the camera starts: the band counts the camera the model needs, and the goal can be typed meanwhile. Replacing a goal or cancelling drops any model output that is still pending.
@@ -178,9 +180,63 @@ The words in the boxes are what the band says, with the matching state from `/gu
 - Commands are refused while `guidance_node` is not connected.
 - A process that fails shows its cause in one line, with the log one click away. The processes are fixed commands from `aria_guidance/system.py`, log to `.runtime/logs/`, and keep running across a backend restart.
 
-The wearer can run the task by voice, starting each command with "Aria" ("Aria, trial start, pick up the marker"), and the same task controls exist as ROS topics. The microphone stays on, and each trial saves its audio, so tell people nearby. [ROS control](docs/ros-control.md) has the spoken commands and the terminal equivalents.
+The wearer can run the task by voice, as below, and the same task controls exist as ROS topics. [ROS control](docs/ros-control.md) has the terminal commands.
 
 The console's other views are **Trials**, below, **Setup**, a short version of this section, and **Try a task**, which plans from an uploaded clip of at least 10 seconds without any ROS. The browser turns the last 10 seconds into 20 timestamped frames.
+
+### Run a task by voice
+
+The glasses' microphone stays on, and "Aria" marks speech meant for the system. Speech that doesn't start with "Aria" is ignored unless the glasses just asked something.
+
+**Get ready.** Start the backend, then in the Live view press **Start** on Guidance and choose **Glasses**. Wait for the band to count 10 s of camera. The card **What the microphone hears**, under the camera view, should say *Listening for Aria*. Every trial saves all microphone audio, so tell people nearby.
+
+**How one command travels.**
+
+1. A pause of about 0.8 s ends what you said, and the node cuts it from the microphone stream.
+2. Whisper transcribes it, whatever it was, in about 1.5 s. It appears on the card.
+3. The node checks for "Aria" at the start. Exact words such as "Aria, stop" act at once.
+4. Anything else addressed in a running trial goes to the Qwen model, which picks a label from the words alone in about 0.3 s. The label picks an action, and a new step still looks at the camera.
+5. The glasses speak. The microphone is off until they should have finished, and the card says so.
+
+**Example.** The goal is to put the mug on the white pad.
+
+| The wearer says | The card shows | What happens |
+| --- | --- | --- |
+| "Okay, where's that mug" | Ignored: no Aria at the start | Nothing |
+| "Aria, trial start, put the mug on the white pad" | Started the trial | The trial opens. The model looks at the last 10 s of camera, and the glasses say "Reach for the white mug, right in front of you." |
+| *(waits; the card says Not listening while the glasses speak)* | | |
+| "Aria, I can't find it" | Asked for a new step · model said help | The glasses say "Okay", then give a more detailed step |
+| "Aria, hold on" | No action · model said ignore | Nothing |
+| "Aria, next" | Asked for a new step | The glasses say "Okay", then the next step |
+| "Aria, forget it" | Spoke a hint · model said cancel | The glasses say "Say Aria, stop to cancel." The trial keeps running: the model can never close one |
+| "Aria, next" | Asked for a new step | The glasses say "The task looks complete. Say done to confirm, or next to continue." |
+| "Done" (no "Aria" needed for 10 s after that question) | Confirmed the task is complete | The glasses say "Task complete." The trial closes as `completed` |
+
+**Words that act at once.** Each must be the whole phrase, after "Aria".
+
+| Say | Effect |
+| --- | --- |
+| "Aria, trial start, *goal*" | Opens a trial with that goal, replacing any running one |
+| "Aria, trial start" | Asks "What is the goal?", and your next words are the goal |
+| "Aria, stop" or "Aria, cancel" | Closes the trial as `cancelled` |
+| "Aria, finish" or "Aria, trial end" | Closes the trial as `completed` |
+| "Aria, next" or "Aria, done" | Asks for the next step |
+| "Aria, repeat" | Speaks the last step again |
+| "Aria, note: *text*" | Saves a note in the trial |
+| "Aria" alone, then a pause | Your next words count as addressed, for 8 s |
+
+**When nothing happens, read the card.**
+
+| The card shows | Why | Do this |
+| --- | --- | --- |
+| Nothing new, and the label said *Not listening* | The microphone was off while the glasses spoke, which also cuts off the start of a quick reply | Wait for *Listening for Aria*, then speak |
+| Ignored: no Aria at the start | "Aria" wasn't the first word ("Next, Aria next" doesn't count), or Whisper missed it | Say it again, with "Aria" first and clearly |
+| The goal is cut short, and the rest is ignored | You paused for about 0.8 s mid-sentence | Say "Aria, trial start, *goal*" in one breath. It replaces the wrong trial |
+| Sound, but no words recognized | A click, or speech too quiet to recognize | Say it again, louder |
+| Spoke a hint | The model thinks you want to stop or finish, and only exact words do that | Say "Aria, stop" or "Aria, finish" |
+| No microphone audio | The glasses aren't streaming sound | Check the glasses and restart the camera |
+
+**Hold to talk** still works as a fallback. It needs no "Aria" and treats the whole recording as a reply. [ROS control](docs/ros-control.md#spoken-commands) has the reply windows, the classifier labels and the limits.
 
 ## Review trials
 

@@ -2,6 +2,29 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-30 — Live microphone feed in the console (commit "Show what the microphone hears in the console")
+
+In the first trial on the glasses most speech was not acted on, and the console could not show why.
+
+**Added**
+- Live view card **What the microphone hears**: the last 20 utterances, each with its time, text and outcome, including ignored speech, empty transcripts and recognizer failures. It also shows the classifier's label and any language other than English.
+- A microphone state on the same card: listening, hearing speech, transcribing, deaf while the glasses speak, Hold to talk, open mic off, or no audio.
+- `mic` and `feed` in the console state from guidance_node (`/v1/live/state`, `/api/live/state`).
+- README section "Run a task by voice": the path of one command, a worked example, and what to do for each thing the card shows.
+
+**Privacy**
+- Ignored speech's text now reaches the console, which the open-mic change kept to a debug log. It stays in guidance_node's and the backend's memory. It is not on `/guidance/state` and not in the trial folder, and it is readable from `/api/live/state` by anyone who can reach the backend.
+
+**Found in that trial** (`audio.pcm` replayed offline; not changed here)
+- The deaf window clips replies: "I want to place the mug" became the goal "Yes, the mug", because the speech began before the estimated end of "What is the goal?" plus the 0.5 s guard.
+- A pause of 0.8 s ends an utterance, so the rest of that goal was ignored as speech without "Aria".
+- "Next, Aria next" is not addressed, because "Aria" must come first.
+- "Aria done" came back as "done." from the cut clip, at every pre-roll tried (0.3, 0.6 and 1.0 s), though the whole file transcribes it. One sample.
+- Auto-detect read a short English clip as German.
+
+**Upgrade notes**
+- Restart Guidance from the console and reload the page. The backend needs no restart.
+
 ## 2026-10-30 — "Aria" open-mic commands with an intent classifier (commit "Add Aria open-mic commands with an intent classifier")
 
 The wearer had to hold push-to-talk, and anything that wasn't an exact word was feedback or, with no task, a new goal. An open mic would have turned any chatter into a trial. Now the mic stays on and "Aria" marks speech meant for the system. [ROS control](ros-control.md) has the full tables and limits.

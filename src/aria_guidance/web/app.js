@@ -127,8 +127,27 @@ function renderCamera(s){
   $("#live-camera-source").textContent=source?(CAMERAS[source]||`Camera: ${source}`):"No camera";
   $("#live-camera-rate").textContent=source?`${c.hz.toFixed(1)} Hz · ${late?`last frame ${c.age_s.toFixed(1)} s ago`:"live"}`:"";
 }
+const MIC_STATES={listening:"Listening for Aria",speech:"Hearing speech",transcribing:"Transcribing",deaf:"Not listening: the glasses are speaking",talk:"Recording: Hold to talk",off:"Open mic off",no_audio:"No microphone audio"};
+const HEARD_OUTCOMES={no_words:"Sound, but no words recognized",no_aria:"Ignored: no Aria at the start",echo:"Ignored: the glasses' own words",failed:"Recognizer failed",hold:"Hold to talk",discard:"Ignored",start:"Started the trial",ask_goal:"Asked for the goal",cancel:"Cancelled the trial",finish:"Finished the trial",confirm:"Confirmed the task is complete",repeat:"Repeated the step",note:"Saved as a note",feedback:"Asked for a new step",listen:"Waiting for the next words",say:"Spoke a hint",none:"No action"};
+const IGNORED=new Set(["no_words","no_aria","echo","failed"]);
+function renderMic(s){
+  const online=Boolean(s&&s.node_online),state=online?(s.mic||"none"):"none";
+  const pill=$("#live-mic-state");pill.dataset.mic=state;pill.textContent=online?(MIC_STATES[state]||"Starting"):"Guidance stopped";
+  const feed=online&&s.feed||[],key=JSON.stringify(feed);
+  if(key===live.feedKey)return;
+  live.feedKey=key;
+  // Newest first. Whisper's text is untrusted, so every field goes through esc.
+  $("#live-feed").innerHTML=feed.length?[...feed].reverse().map(e=>{
+    const time=new Date(e.t_ms).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"});
+    const parts=[HEARD_OUTCOMES[e.outcome]||e.outcome];
+    if(e.label)parts.push(`model said ${e.label}`);
+    if(e.language&&e.language!=="en")parts.push(`recognized as ${e.language}`);
+    return `<li data-ignored="${IGNORED.has(e.outcome)}"><span class="feed-time">${esc(time)}</span><span class="feed-text">${e.text?`“${esc(e.text)}”`:"(no words)"}</span><span class="feed-outcome">${esc(parts.join(" · "))}</span></li>`;
+  }).join(""):`<li class="live-feed-empty">Nothing heard yet.</li>`;
+}
 function renderLive(s){
   live.state=s;
+  renderMic(s);
   const online=Boolean(s&&s.node_online),active=ACTIVE(s),confirming=active&&s.task==="awaiting_confirmation";
   const [label,tone,detail,primary]=band(s);
   $("#live-band").dataset.tone=tone;$("#live-label").textContent=label;$("#live-detail").textContent=detail;

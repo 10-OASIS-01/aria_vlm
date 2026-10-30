@@ -216,6 +216,53 @@ def test_hold_to_talk_needs_no_wake_word(probe, node, camera, backend, mic, tmp_
     assert backend.engine.calls[-1]["history"][-1]["text"] == "I can't find it"
 
 
+def test_console_feed_shows_every_utterance_but_the_trial_keeps_only_addressed(
+    probe, node, camera, backend, mic, tmp_path
+):
+    import httpx
+
+    started(probe, node, mic)
+    mic("where did I leave my coffee")
+    mic("")
+    backend.engine.intent = "cancel"
+    mic("Aria, forget it")
+    node.messages.put(("heard_error", time.monotonic(), "503"))
+    node.audio_busy = True
+    wait_for(lambda: len(node.heard_feed) == 5)
+    outcomes = [(e["text"], e["outcome"], e["label"]) for e in node.heard_feed]
+    assert outcomes == [
+        ("Aria, trial start, pick up the pen", "start", None),
+        ("where did I leave my coffee", "no_aria", None),
+        ("", "no_words", None),
+        ("Aria, forget it", "say", "cancel"),
+        ("", "failed", None),
+    ]
+    web = httpx.Client(base_url=backend.url, trust_env=False)
+    wait_for(lambda: len(web.get("/api/live/state").json().get("feed", [])) == 5)
+    web.close()
+    assert "coffee" not in str(trials(tmp_path))
+    assert all("feed" not in state for state in probe.states)  # Not on /guidance/state.
+
+
+def test_mic_state_says_when_speech_cannot_be_heard(probe, node, camera, mic):
+    # No Audio messages here, so the glasses look silent until last_audio moves.
+    wait_for(lambda: node.mic_state == "no_audio")
+    node.last_audio = time.monotonic() + 60  # Stays fresh for the rest of the test.
+    wait_for(lambda: node.mic_state == "listening")
+    node.endpointer.speaking = True
+    wait_for(lambda: node.mic_state == "speech")
+    node.endpointer.speaking = False
+    node.speaking_until = time.monotonic() + 60
+    wait_for(lambda: node.mic_state == "deaf")
+    assert node.console_state["mic"] == "deaf"
+    node.speaking_until = 0.0
+    node.audio_active = True
+    wait_for(lambda: node.mic_state == "talk")
+    node.audio_active = False
+    node.config["open_mic"] = False
+    wait_for(lambda: node.mic_state == "off")
+
+
 def audio_block(probe_pub, level, stamp_ms, samples=1600):
     message = Audio()
     message.header.stamp.sec = int(stamp_ms // 1000)

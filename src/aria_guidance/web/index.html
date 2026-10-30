@@ -66,10 +66,17 @@
           <div class="live-danger"><button type="button" class="text-button live-cancel" id="live-cancel">Cancel task</button></div>
         </div>
       </div>
+      <div class="live-side">
       <article class="card live-view">
         <div class="live-camera" id="live-camera" data-source="none" data-health="none"><strong id="live-camera-source">No camera</strong><span id="live-camera-rate"></span></div>
         <div class="live-preview"><img id="live-preview" alt="Camera view, as sent to the model" hidden><p id="live-nopreview">No camera view yet. It appears once a camera is running.</p></div>
       </article>
+      <article class="card live-mic" aria-labelledby="live-mic-title">
+        <div class="live-mic-head"><h3 id="live-mic-title">What the microphone hears</h3><span class="live-mic-state" id="live-mic-state" data-mic="none">Guidance stopped</span></div>
+        <ol class="live-feed" id="live-feed" role="log" aria-live="polite"><li class="live-feed-empty">Nothing heard yet.</li></ol>
+        <p class="live-hint">Shown here only. The text of ignored speech is not written to the trial, but the trial's audio keeps everything.</p>
+      </article>
+      </div>
     </div>
   </section>
 

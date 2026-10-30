@@ -100,7 +100,7 @@ The wake word must be the first word, or follow `okay`, `ok`, `hey`, `hi`, `um` 
 
 **Speech during planning.** A finished plan's instruction is held while an utterance is pending. If the utterance is an action, the instruction is dropped and a new plan runs. If it is not (no wake word, `ignore`), the instruction is spoken.
 
-**What is saved.** The trial record keeps only addressed speech as `transcript` events, with the label in `intent`. Other speech's text goes only to a debug-level log line, off by default (`--ros-args --log-level guidance_node:=debug`). The raw audio is different, as below.
+**What is saved.** The trial record keeps only addressed speech as `transcript` events, with the label in `intent`. Other speech's text goes to the console's microphone card and a debug-level log line, off by default (`--ros-args --log-level guidance_node:=debug`). The card holds the last 20 utterances in memory and readable from `/api/live/state`, and it is not written to disk. The raw audio is different, as below.
 
 **Limits**
 
@@ -134,7 +134,9 @@ Console Hold to talk and `/guidance/talk` stay as a manual fallback. They suspen
 - `/guidance/talk` refuses to start while planning, transcription or the estimated playback of the previous instruction is active. Retry once it finishes.
 - `ros2 service call` takes a second or two to start. Begin speaking only after the start call returns, or the first words are lost.
 
-For both, wait about ten seconds after the camera starts before giving the first goal, so a complete observation window exists. `/guidance/transcript` shows what was recognized and acted on, so check it first when a command has no effect. Open-mic speech that was dropped does not appear there.
+The Live view's **What the microphone hears** card is the first place to look when a command has no effect. It lists every utterance the node cut from the microphone with its outcome, and its label shows when the node is deaf because the glasses are speaking.
+
+For both, wait about ten seconds after the camera starts before giving the first goal, so a complete observation window exists. `/guidance/transcript` shows what was recognized and acted on, and open-mic speech that was dropped does not appear there.
 
 ## Microphone level
 

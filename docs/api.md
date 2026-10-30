@@ -40,7 +40,7 @@ client.close()
 | POST | `/v1/live/state` | guidance_node's state JSON, on change and every 2 s |
 | PUT | `/v1/live/preview` | guidance_node's newest preview JPEG |
 | GET | `/v1/live/commands?wait=` | guidance_node long-polls for console commands (up to 25 s) |
-| GET | `/api/live/state?after=&wait=` | The console long-polls the state; adds `version` and `node_online` |
+| GET | `/api/live/state?after=&wait=` | The console long-polls the state; adds `version` and `node_online`. Also carries `mic` and `feed`, the last 20 utterances, including ignored speech |
 | GET | `/api/live/preview.jpg` | Newest preview; 404 while the node is offline |
 | POST | `/api/live/command` | `{kind: goal\|reply\|note\|talk, text}`; 503 while the node is offline |
 | GET | `/api/system` | guidance_node, glasses and test camera: state, exit code, start time, log tail when failed |

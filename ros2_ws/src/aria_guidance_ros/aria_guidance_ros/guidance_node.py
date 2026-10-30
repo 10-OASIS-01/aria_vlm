@@ -41,6 +41,8 @@ LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 ECHO_GUARD_SECONDS = 0.5  # The estimated end of speech is rough; keep the mic deaf a little longer.
 AUDIO_BUFFER_MS = 10_500  # About the frames a new trial's video opens with.
 MAX_QUEUED_UTTERANCES = 3
+HEARD_FEED_SIZE = 20  # Utterances the console's microphone card shows.
+MIC_SILENT_SECONDS = 1.0  # No audio block for this long: the glasses are not streaming sound.
 # Seconds speech stays answerable after the system invites it, from the end of its own speech.
 GOAL_WINDOW_SECONDS = 15.0
 REPLY_WINDOW_SECONDS = 10.0
@@ -95,6 +97,10 @@ class GuidanceNode(Node):
         self.last_wait_log = 0.0
         self.last_heard = None
         self.last_tts = None
+        self.last_audio = 0.0
+        self.last_language = None
+        self.mic_state = None
+        self.heard_feed = deque(maxlen=HEARD_FEED_SIZE)
         self.voice_turn = False  # This reply came from speech, so its transcript already says it.
         self.endpointer = Endpointer(self.config["open_mic_threshold"])
         self.utterances = deque(maxlen=MAX_QUEUED_UTTERANCES)  # (samples, rate, started)
@@ -135,13 +141,59 @@ class GuidanceNode(Node):
             "trial": self.trial.last_ref,
         }
         self.state_pub.publish(String(data=json.dumps(body, ensure_ascii=False)))
-        self.console_state = body
+        # The microphone card only goes to the console: not to /guidance/state, not to the trial.
+        self.console_state = {**body, "mic": self.mic_state, "feed": list(self.heard_feed)}
         self.console_wake.set()
         self.get_logger().info(f"{state}: {detail}")
         self.last_detail = detail
         if state != self.last_state:
             self.last_state = state
             self.record("state", state=state, detail=detail)
+
+    def console_update(self, **fields):
+        """Replaces the console's state with these fields changed, so console_push sends it."""
+        self.console_state = {**self.console_state, **fields}
+        self.console_wake.set()
+
+    def log_heard(self, text, outcome, label=None):
+        """Adds one utterance to the console's feed; the text stays in memory.
+
+        Args:
+            text: what the recognizer heard, "" for nothing.
+            outcome: no_words, no_aria, echo, failed, hold, or the command acted on.
+            label: the classifier's label, when it decided.
+        """
+        self.heard_feed.append(
+            {
+                "t_ms": time.time() * 1000,
+                "text": text,
+                "outcome": outcome,
+                "label": label,
+                "language": self.last_language,
+            }
+        )
+        self.console_update(feed=list(self.heard_feed))
+
+    def update_mic(self):
+        """What the microphone is doing, for the console: speech while deaf never gets a transcript."""
+        now = time.monotonic()
+        if now - self.last_audio > MIC_SILENT_SECONDS:
+            state = "no_audio"
+        elif self.audio_active:
+            state = "talk"
+        elif not self.config["open_mic"]:
+            state = "off"
+        elif now < self.speaking_until + ECHO_GUARD_SECONDS:
+            state = "deaf"
+        elif self.endpointer.speaking:
+            state = "speech"
+        elif self.audio_busy or self.utterances:
+            state = "transcribing"
+        else:
+            state = "listening"
+        if state != self.mic_state:
+            self.mic_state = state
+            self.console_update(mic=state)
 
     def record(self, kind, **fields):
         if kind == "reply" and self.voice_turn:
@@ -402,6 +454,7 @@ class GuidanceNode(Node):
     def on_audio(self, message):
         if message.sample_rate == 0:
             return  # The first upstream block can have an unknown rate.
+        self.last_audio = time.monotonic()
         try:
             samples = pcm32_to_mono(message.data, message.channels, self.config["audio_gain"])
         except ValueError as e:
@@ -469,11 +522,16 @@ class GuidanceNode(Node):
     def on_heard(self, started, result):
         """Decides what one open-mic transcript asks for; only a discard leaves no trace."""
         text = result["text"]
+        self.last_language = result.get("language")
         window = self.window[0] if self.window and started <= self.window[1] else None
         command, rest = interpret(text, self.task, window)
         if command == "discard" or is_echo(text, self.last_tts):
             self.audio_busy = False
             self.get_logger().debug(f"Discarded: {text!r}")
+            if not text.strip():
+                self.log_heard("", "no_words")
+            else:
+                self.log_heard(text, "no_aria" if command == "discard" else "echo")
             return
         self.window = None
         if command == "classify":
@@ -522,6 +580,7 @@ class GuidanceNode(Node):
         self.last_heard = heard
         self.transcript_pub.publish(String(data=heard))
         self.record("transcript", text=heard, intent=label)
+        self.log_heard(heard, command, label if label != command else None)
         self.voice_turn = True
         try:
             if command == "start":
@@ -617,6 +676,7 @@ class GuidanceNode(Node):
             if kind == "heard_error":
                 self.audio_busy = False
                 self.record("error", text=payload)
+                self.log_heard("", "failed")
                 continue
             if kind == "intent":
                 self.audio_busy = False
@@ -646,12 +706,15 @@ class GuidanceNode(Node):
                 self.status("error", payload)
             elif kind == "error":
                 self.record("error", text=payload)
+                self.log_heard("", "failed")
                 self.status("error", payload)
             elif kind == "transcript":
                 text = payload["text"]
                 self.transcript_pub.publish(String(data=text))
                 self.last_heard = text
                 self.record("transcript", text=text, duration_ms=payload.get("duration_ms"))
+                self.last_language = payload.get("language")
+                self.log_heard(text, "hold" if text else "no_words")
                 if text:
                     self.voice_turn = True
                     try:
@@ -663,6 +726,7 @@ class GuidanceNode(Node):
         self.hear_next()
         self.release_held_plan()
         self.plan_if_ready()
+        self.update_mic()
         if (
             self.audio_active
             and time.monotonic() - self.audio_started > self.config["max_audio_seconds"]
