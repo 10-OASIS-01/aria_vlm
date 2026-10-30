@@ -44,6 +44,7 @@ client.close()
 | GET | `/api/live/preview.jpg` | Newest preview; 404 while the node is offline |
 | POST | `/api/live/command` | `{kind: goal\|reply\|note\|talk, text}`; 503 while the node is offline |
 | GET | `/api/system` | guidance_node, glasses and test camera: state, exit code, start time, log tail when failed |
+| GET | `/api/system/{name}/log` | `{exists, lines}`: the last 200 non-blank lines of that process's log, without colour codes; `exists` is false if the console never started it. Unknown names are 404 |
 | POST | `/api/system/{name}/{start\|stop}` | Starts or stops one of those three; nothing else can be run |
 | GET | `/api/trials` | Trial summaries from `ARIA_SESSIONS_DIR` and `.runtime/guidance`, newest first |
 | GET | `/api/trials/{session}/{trial}` | `trial.json`, events, review, frame count and the first frame's time |

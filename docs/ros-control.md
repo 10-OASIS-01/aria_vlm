@@ -61,7 +61,7 @@ The glasses do not report when playback ends, and they offer no TTS cancel ackno
 
 ## Spoken commands
 
-With `open_mic: true`, the default in [guidance.yaml](../ros2_ws/src/aria_guidance_ros/config/guidance.yaml), the glasses' microphone is always on and "Aria" marks speech meant for the system. Every utterance is transcribed. Speech without "Aria" is dropped, unless a reply window is open.
+With `open_mic: true`, the default in [guidance.yaml](../ros2_ws/src/aria_guidance_ros/config/guidance.yaml), the glasses' microphone is always on, including while they speak, and "Aria" marks speech meant for the system. A pause of about 1.2 s ends an utterance (`open_mic_silence_seconds`). Every utterance is transcribed. Speech without "Aria" is dropped, unless it is a bare step word or a reply window is open.
 
 | Say | When | Effect | Model call |
 | --- | --- | --- | --- |
@@ -74,9 +74,11 @@ With `open_mic: true`, the default in [guidance.yaml](../ros2_ws/src/aria_guidan
 | "Aria, note: ..." | Task active | Saved as a note in the trial record | No |
 | "Aria" alone, then a pause | Any time | The next words count as addressed | No |
 | "Aria, I can't find it" (anything else) | Task active | Classified, as below | Yes |
+| Bare `next`, `done` or `repeat`, with no "Aria" | Task active | Requests the next step, or speaks the last instruction. The whole utterance must be that word. `done` does not confirm completion here | No |
+| "Well, Aria, next" ("Aria" as the second or third word) | Task active | Exact `next`, `done`, `repeat` and `note:` act; anything else is classified. Can't close, replace or start a trial | Only if classified |
 | "Aria, what's next" (anything else) | No task | Says "No trial running. Say Aria, trial start." | No |
 
-The wake word must be the first word, or follow `okay`, `ok`, `hey`, `hi`, `um` or `uh`. Whisper's spellings `arya`, `area` and `maria` also count, so "Okay Aria, what's next" is addressed and "in that area" is not. The transcribed words must otherwise be the whole command: case and trailing punctuation are ignored.
+To close, replace or start a trial, the wake word must be the first word, or follow `okay`, `ok`, `hey`, `hi`, `um` or `uh`. Whisper's spellings `arya`, `area` and `maria` also count there, so "Okay Aria, what's next" is addressed and "in that area" is not. The transcribed words must otherwise be the whole command: case and trailing punctuation are ignored. As the second or third word, only `aria` and `arya` count. With no task, that speech only gets the "No trial running" line, and "I said Aria, stop" reaches the classifier and at most gets a hint.
 
 **Classifier labels.** Text only, on the Qwen model already loaded, with no frames. It picks the action, and a new step still looks at the camera through `/v1/plan`.
 
@@ -88,7 +90,7 @@ The wake word must be the first word, or follow `okay`, `ok`, `hey`, `hi`, `um` 
 | `ignore` | "hold on" | Nothing |
 | No label, or the call failed | | Says "Sorry, I didn't catch that." |
 
-**What can close a trial:** only the exact words above, plus exact `done` or `yes` after "The task looks complete". The model never can, and "stop" without "Aria" never does, even in a reply window.
+**What can close or replace a trial:** only the exact words above after a leading "Aria", plus exact `done` or `yes` after "The task looks complete", with a leading "Aria" or in its 10 s reply window. The model never can, and "stop" without "Aria" never does, even in a reply window.
 
 **Reply windows** need no "Aria". The timer starts at the estimated end of the system's speech.
 
@@ -98,6 +100,8 @@ The wake word must be the first word, or follow `okay`, `ok`, `hey`, `hi`, `um` 
 | A question from the model, or "The task looks complete" | 10 s | Answer it. Exact `done` or `yes` confirms completion |
 | "Aria" alone | 8 s | Are addressed |
 
+**Speech while the glasses talk.** The microphone stays on, so "Aria, stop" interrupts an instruction. In the first trial on the glasses, a 10 s instruction never reached the speech threshold and Whisper heard nothing in it, while the old mic-off window cut off replies. As a backstop, speech that begins before the estimated end of the line is dropped if two or more of its words appear in order in that line, with or without "Aria". So "Say Aria, stop to cancel." can't close the trial if the microphone hears it, and the card shows "Ignored: the glasses' own words". If the card shows their voice at your room and volume, set `open_mic_deaf_while_speaking: true` to turn the microphone off during that speech. That restores the old limits: "Aria, stop" is lost while they speak, and the start of a quick reply is cut off.
+
 **Speech during planning.** A finished plan's instruction is held while an utterance is pending. If the utterance is an action, the instruction is dropped and a new plan runs. If it is not (no wake word, `ignore`), the instruction is spoken.
 
 **What is saved.** The trial record keeps only addressed speech as `transcript` events, with the label in `intent`. Other speech's text goes to the console's microphone card and a debug-level log line, off by default (`--ros-args --log-level guidance_node:=debug`). The card holds the last 20 utterances in memory and readable from `/api/live/state`, and it is not written to disk. The raw audio is different, as below.
@@ -105,12 +109,12 @@ The wake word must be the first word, or follow `okay`, `ok`, `hey`, `hi`, `um` 
 **Limits**
 
 - **Bystanders' voices are saved.** Every trial's `audio.pcm` keeps all microphone audio from about 10 s before the goal, and the session VRS already keeps what the glasses stream. Tell people nearby.
-- **No barge-in.** The microphone is deaf while the glasses speak, about 4 to 17 s per instruction, so "Aria, stop" in that time is lost. Cancel in the console still works.
 - **Mistakes close trials.** There is no spoken confirmation, so a misheard or overheard "Aria, stop" ends the trial for good.
 - **Anyone can answer.** Any voice saying "Aria" counts, and any voice can answer in a reply window, including setting the goal.
-- **Forgetting the word** gets no response, because that speech is dropped silently.
+- **Forgetting the word** gets no response, because that speech is dropped silently, apart from the bare step words.
+- **A bare `next` or `done` from anyone** replans during a trial, with "Okay" spoken. It can't end one, and the model checks the scene.
 - **Whisper failures are logged, not spoken.** A failed transcription can't be told from noise. Only classifier failures say "Sorry".
-- **Other languages** may spell "Aria" in ways the list misses. Whisper stays on auto-detect.
+- **Whisper is set to English** (`ARIA_ASR_LANGUAGE=en`) for all speech, including Hold to talk, so the Chinese command words in `task.py` won't be recognized. Set it empty to auto-detect, which misread short English clips in testing, is slower, and may spell "Aria" in ways the list misses.
 - A spoken line can collide with a finishing plan, which suppresses the instruction. "Aria, repeat" recovers it.
 
 ### Hold to talk
@@ -134,7 +138,7 @@ Console Hold to talk and `/guidance/talk` stay as a manual fallback. They suspen
 - `/guidance/talk` refuses to start while planning, transcription or the estimated playback of the previous instruction is active. Retry once it finishes.
 - `ros2 service call` takes a second or two to start. Begin speaking only after the start call returns, or the first words are lost.
 
-The Live view's **What the microphone hears** card is the first place to look when a command has no effect. It lists every utterance the node cut from the microphone with its outcome, and its label shows when the node is deaf because the glasses are speaking.
+The Live view's **What the microphone hears** card is the first place to look when a command has no effect. It lists every utterance the node cut from the microphone with its outcome, and its label says what the microphone is doing right now.
 
 For both, wait about ten seconds after the camera starts before giving the first goal, so a complete observation window exists. `/guidance/transcript` shows what was recognized and acted on, and open-mic speech that was dropped does not appear there.
 
@@ -142,7 +146,7 @@ For both, wait about ten seconds after the camera starts before giving the first
 
 On Aria Gen 2 glasses, `/aria/audio` carries 8 channels at 16 kHz, with 16-bit samples in the upper half of each int32. After the node mixes the channels down, room noise measured about 0.0002 RMS of full scale and normal speech about 0.0006. The backend treats a clip below 0.002 RMS as silence and returns an empty transcript without running speech recognition. At `audio_gain: 1.0` every recording therefore comes back empty, so the node defaults to `audio_gain: 16.0`.
 
-The open mic counts a block as speech at `open_mic_threshold: 0.006` RMS, after gain. That sits between the room (about 0.0032 at x16) and normal speech (about 0.0096). Going over it only costs a Whisper call, because the recognizer's voice filter returns empty text for non-speech. `tools/mic_level.py` shows the live level.
+The open mic counts a block as speech at `open_mic_threshold: 0.006` RMS, after gain. That sits between the room (about 0.0032 at x16) and normal speech (about 0.0096). Going over it only costs a Whisper call, because the recognizer's voice filter returns empty text for non-speech. `tools/mic_level.py` shows the live level. `open_mic_silence_seconds` and `open_mic_deaf_while_speaking` are in the same file.
 
 Adjust `audio_gain` in [guidance.yaml](../ros2_ws/src/aria_guidance_ros/config/guidance.yaml), or in a copy passed with `config:=...`, if a different microphone or room needs it. The node reads the value only at startup, so restart it and confirm:
 

@@ -5,6 +5,7 @@ outlive the backend, so a backend restart finds them again instead of killing th
 """
 
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -13,6 +14,9 @@ import time
 from pathlib import Path
 
 LOG_TAIL_LINES = 6
+LOG_VIEW_LINES = 200  # What the console's Process logs panel shows.
+LOG_READ_BYTES = 64 * 1024  # A node can log for hours; the end is all anyone reads.
+ANSI_CODES = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def ros_services(settings, aria_vlm_root):
@@ -114,12 +118,23 @@ class ProcessManager:
                 )
         return rows
 
-    def log_tail(self, name):
+    def has_log(self, name):
+        """False for a process never started from this console: VS Code and terminals log elsewhere."""
+        return (self.log_dir / f"{name}.log").is_file()
+
+    def log_tail(self, name, count=LOG_TAIL_LINES):
+        """The last `count` non-blank lines of a process's log, without colour codes."""
         try:
-            lines = (self.log_dir / f"{name}.log").read_text(errors="replace").splitlines()
+            with open(self.log_dir / f"{name}.log", "rb") as log:
+                start = max(log.seek(0, os.SEEK_END) - LOG_READ_BYTES, 0)
+                log.seek(start)
+                text = log.read().decode(errors="replace")
         except OSError:
             return []
-        return [line for line in lines if line.strip()][-LOG_TAIL_LINES:]
+        if start:
+            text = text.partition("\n")[2]  # The read began mid-line.
+        lines = [ANSI_CODES.sub("", line) for line in text.splitlines()]
+        return [line for line in lines if line.strip()][-count:]
 
     def start(self, name):
         if name not in self.services:
@@ -137,6 +152,8 @@ class ProcessManager:
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.DEVNULL,
+                    # Python holds back prints to a file for kilobytes; the log panel wants them now.
+                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
                     start_new_session=True,  # Own group: survives a backend restart, stops as one.
                 )
             self.children[name] = child

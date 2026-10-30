@@ -2,6 +2,37 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-10-30 — Fix missed speech and show process logs in the console (commit "Fix missed speech and show process logs in the console")
+
+The first trial on the glasses (`01_142231`) lost most of its speech. Replaying its `audio.pcm` showed the words were lost before any text existed, or lost their "Aria" inside Whisper, so the wake word stays and the model still can't end a trial. The console also gave no view of the processes it starts.
+
+**Changed behavior**
+- The microphone stays on while the glasses speak, so "Aria, stop" can interrupt and a quick reply keeps its start. `open_mic_deaf_while_speaking: true` restores the old window.
+- A pause of 1.2 s ends an utterance (was 0.8 s). `open_mic_silence_seconds` sets it.
+- Whisper runs in English with the prompt "Aria, next. Aria, done." in place of the "Aria" hotword. This applies to all speech, including Hold to talk, so the Chinese command words no longer work by default. `ARIA_ASR_LANGUAGE` empty goes back to auto-detect.
+- "Aria" as the second or third word counts, so "Next. Aria, next" asks for a step. It reaches only exact `next`, `done`, `repeat` and `note:`, or the classifier. It can't close, replace or start a trial. `area` and `maria` still count only in first position.
+- A bare `next`, `done` or `repeat` needs no "Aria" during a trial. A bare `done` after "The task looks complete" still closes only in its 10 s window.
+- Speech that begins during the glasses' estimated speech is dropped if two or more of its words appear in order in that line, even with "Aria". So the hint "Say Aria, stop to cancel." can't close the trial if the microphone hears it.
+- The microphone card says "Ignored: no Aria" (was "Ignored: no Aria at the start").
+- Processes the console starts run with `PYTHONUNBUFFERED=1`, so their output reaches the log at once.
+
+**Added**
+- Live view panel **Process logs**: the end of each process's output, updated every second while open. It opens by itself on whatever was just started. Nodes run from VS Code or a terminal don't appear in it.
+- `GET /api/system/{name}/log`: `{exists, lines}`, the last 200 lines. Log reads now cover only the last 64 KiB and drop colour codes.
+- Setting `ARIA_ASR_LANGUAGE` (default `en`), and guidance_node parameters `open_mic_silence_seconds` (1.2) and `open_mic_deaf_while_speaking` (false).
+
+**Measured** (one trial's audio replayed offline, with synthetic speech and noise; not yet run live on the glasses)
+- Pause: 0.8 s and 1.0 s split the goal, and 1.2 s kept it as one sentence.
+- The glasses' voice: no 20 ms block reached the 0.006 threshold during the 10 s instruction (max 0.0047), and Whisper heard nothing in it. That is one instruction at one volume.
+- "Aria done", heard as "done." before, comes back as "Aria, done." with the short prompt.
+- The prompt added no false "Aria": 14/14 `espeak-ng` phrases were addressed as intended, and 40 synthetic noise clips and four real quiet stretches from the trial produced no text.
+- Median Whisper time on the trial's clips: 2.59 s with auto-detect, about 0.7 s now.
+- Costs: the mumbled "Aria" at 77 s in that trial is lost in English, and each command waits 0.4 s longer for the pause.
+
+**Upgrade notes**
+- Restart the backend and Guidance, and reload the page.
+- If the microphone card shows the glasses' voice, set `open_mic_deaf_while_speaking: true`.
+
 ## 2026-10-30 — Live microphone feed in the console (commit "Show what the microphone hears in the console")
 
 In the first trial on the glasses most speech was not acted on, and the console could not show why.

@@ -252,7 +252,11 @@ def test_mic_state_says_when_speech_cannot_be_heard(probe, node, camera, mic):
     node.endpointer.speaking = True
     wait_for(lambda: node.mic_state == "speech")
     node.endpointer.speaking = False
+    wait_for(lambda: node.mic_state == "listening")
     node.speaking_until = time.monotonic() + 60
+    time.sleep(0.5)
+    assert node.mic_state == "listening"  # The glasses speaking keeps it on, by default.
+    node.config["open_mic_deaf_while_speaking"] = True
     wait_for(lambda: node.mic_state == "deaf")
     assert node.console_state["mic"] == "deaf"
     node.speaking_until = 0.0
@@ -261,6 +265,35 @@ def test_mic_state_says_when_speech_cannot_be_heard(probe, node, camera, mic):
     node.audio_active = False
     node.config["open_mic"] = False
     wait_for(lambda: node.mic_state == "off")
+
+
+def test_aria_stop_interrupts_the_glasses(probe, node, camera, mic, tmp_path):
+    started(probe, node, mic)
+    node.speaking_until = time.monotonic() + 30  # Still reading the instruction.
+    mic("Aria, stop")
+    assert trials(tmp_path)[0][0]["outcome"] == "cancelled"
+
+
+def test_a_hint_heard_back_during_playback_does_not_close(probe, node, camera, backend, mic):
+    started(probe, node, mic)
+    backend.engine.intent = "cancel"
+    mic("Aria, forget it")
+    heard(probe, node, 2)
+    node.speaking_until = time.monotonic() + 30
+    mic("Aria, stop")  # The microphone caught the end of "Say Aria, stop to cancel."
+    assert node.task.active and node.heard_feed[-1]["outcome"] == "echo"
+    node.speaking_until = 0.0
+    mic("Aria, stop")  # The same words after the hint are the wearer's.
+    assert not node.task.active
+
+
+def test_bare_next_asks_for_a_step_without_aria(probe, node, camera, backend, mic):
+    started(probe, node, mic)
+    calls = len(backend.engine.calls)
+    mic("Next.")
+    assert heard(probe, node, 2) == "Okay."
+    wait_for(lambda: len(backend.engine.calls) == calls + 1)
+    assert backend.engine.intent_calls == []
 
 
 def audio_block(probe_pub, level, stamp_ms, samples=1600):
@@ -296,16 +329,22 @@ def test_microphone_to_trial_end_to_end(probe, node, executor, camera, tmp_path,
     play(0.001, 5)  # Room noise.
     assert heard_wavs == []
     play(0.02, 6)  # Speech: 0.6 s.
-    play(0.001, 9)  # 0.9 s of trailing quiet ends it.
+    play(0.001, 13)  # 1.3 s of trailing quiet ends it.
     wait_for(lambda: len(heard_wavs) == 1)
     assert heard(probe, node, 1) == "Pick up the pen."
-    # The glasses are speaking: the same loudness must not become an utterance.
+    # With the guard on, speech while the glasses talk must not become an utterance.
+    node.config["open_mic_deaf_while_speaking"] = True
     node.speaking_until = time.monotonic() + 10
     play(0.02, 6)
-    play(0.001, 9)
+    play(0.001, 13)
     time.sleep(0.3)
     assert len(heard_wavs) == 1
     assert not node.endpointer.speaking
+    # By default the same speech gets through, so a reply is not cut off.
+    node.config["open_mic_deaf_while_speaking"] = False
+    play(0.02, 6)
+    play(0.001, 13)
+    wait_for(lambda: len(heard_wavs) == 2)
     node.trial.close("completed")
     [(trial, _, _)] = trials(tmp_path)
     assert trial["audio"]["rate"] == 16000

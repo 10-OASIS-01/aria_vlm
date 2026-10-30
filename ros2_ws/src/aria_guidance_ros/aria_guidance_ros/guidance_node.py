@@ -39,6 +39,7 @@ CONFIRM_HINT = " Say done to confirm, or next to continue."
 CAMERA_SOURCES = {"aria_rgb_optical_frame": "glasses", "fake_camera": "fake"}
 LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 ECHO_GUARD_SECONDS = 0.5  # The estimated end of speech is rough; keep the mic deaf a little longer.
+SPEECH_END_MARGIN_SECONDS = 1.0  # Added to the estimate, so speaking_until errs late.
 AUDIO_BUFFER_MS = 10_500  # About the frames a new trial's video opens with.
 MAX_QUEUED_UTTERANCES = 3
 HEARD_FEED_SIZE = 20  # Utterances the console's microphone card shows.
@@ -70,6 +71,10 @@ class GuidanceNode(Node):
             # Always listen for "Aria"; console Hold to talk and /guidance/talk still work.
             "open_mic": False,
             "open_mic_threshold": 0.006,
+            "open_mic_silence_seconds": 1.2,
+            # In the first glasses trial their voice never reached the threshold, and this cut off
+            # replies. Turn it on if the microphone starts picking the voice up.
+            "open_mic_deaf_while_speaking": False,
             # aria_node's record.output_dir, relative to the same working directory.
             "session_root": "data/sessions",
             "fallback_root": str(FALLBACK_ROOT),
@@ -102,7 +107,9 @@ class GuidanceNode(Node):
         self.mic_state = None
         self.heard_feed = deque(maxlen=HEARD_FEED_SIZE)
         self.voice_turn = False  # This reply came from speech, so its transcript already says it.
-        self.endpointer = Endpointer(self.config["open_mic_threshold"])
+        self.endpointer = Endpointer(
+            self.config["open_mic_threshold"], silence_s=self.config["open_mic_silence_seconds"]
+        )
         self.utterances = deque(maxlen=MAX_QUEUED_UTTERANCES)  # (samples, rate, started)
         self.speech_started = 0.0
         self.window = None  # (kind, deadline): speech needing no "Aria"; see intent.interpret.
@@ -183,7 +190,7 @@ class GuidanceNode(Node):
             state = "talk"
         elif not self.config["open_mic"]:
             state = "off"
-        elif now < self.speaking_until + ECHO_GUARD_SECONDS:
+        elif self.deaf(now):
             state = "deaf"
         elif self.endpointer.speaking:
             state = "speech"
@@ -194,6 +201,13 @@ class GuidanceNode(Node):
         if state != self.mic_state:
             self.mic_state = state
             self.console_update(mic=state)
+
+    def deaf(self, now):
+        """True while the configured echo guard keeps the open mic off."""
+        return (
+            self.config["open_mic_deaf_while_speaking"]
+            and now < self.speaking_until + ECHO_GUARD_SECONDS
+        )
 
     def record(self, kind, **fields):
         if kind == "reply" and self.voice_turn:
@@ -357,7 +371,7 @@ class GuidanceNode(Node):
         self.tts_pub.publish(String(data=text))
         self.last_tts = text
         # Upstream provides no playback acknowledgement. This is only an estimate for PTT/echo.
-        estimated = max(len(text.split()) / 2.3, len(text) / 12) + 1.0
+        estimated = max(len(text.split()) / 2.3, len(text) / 12) + SPEECH_END_MARGIN_SECONDS
         self.speaking_until = time.monotonic() + estimated
 
     def on_talk(self, request, response):
@@ -490,8 +504,8 @@ class GuidanceNode(Node):
             self.finish_audio()
 
     def listen(self, samples, rate):
-        """Feeds the open mic to the endpointer, deaf while the glasses speak."""
-        if time.monotonic() < self.speaking_until + ECHO_GUARD_SECONDS:
+        """Feeds the open mic to the endpointer."""
+        if self.deaf(time.monotonic()):
             self.endpointer.reset()
             return
         was_speaking = self.endpointer.speaking
@@ -525,7 +539,9 @@ class GuidanceNode(Node):
         self.last_language = result.get("language")
         window = self.window[0] if self.window and started <= self.window[1] else None
         command, rest = interpret(text, self.task, window)
-        if command == "discard" or is_echo(text, self.last_tts):
+        # Without the margin: someone repeating a hint just after it must not count as its echo.
+        during_speech = started < self.speaking_until - SPEECH_END_MARGIN_SECONDS
+        if command == "discard" or is_echo(text, self.last_tts, during_speech):
             self.audio_busy = False
             self.get_logger().debug(f"Discarded: {text!r}")
             if not text.strip():

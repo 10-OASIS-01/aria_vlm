@@ -31,6 +31,8 @@ class Settings:
     # Four lines (EVIDENCE, MODE, SAY, EXPECT) run about 100 tokens.
     max_new_tokens: int = 256
     asr_model_path: str = field(default_factory=lambda: os.getenv("ARIA_ASR_MODEL_PATH", ""))
+    # Empty means auto-detect, which misreads short clips and adds about a second to each.
+    asr_language: str = field(default_factory=lambda: os.getenv("ARIA_ASR_LANGUAGE", "en"))
     api_token: str = field(default_factory=lambda: os.getenv("ARIA_API_TOKEN", ""))
     save_frames: bool = field(default_factory=lambda: os.getenv("ARIA_SAVE_FRAMES", "1") == "1")
     max_request_bytes: int = 24 * 1024 * 1024

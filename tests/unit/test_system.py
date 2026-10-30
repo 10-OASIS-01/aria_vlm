@@ -85,3 +85,31 @@ def test_api_runs_only_known_processes(tmp_path, manager):
     rows = client.post("/api/system/guidance/start").json()
     assert next(r for r in rows if r["name"] == "guidance")["state"] == "running"
     assert {r["name"] for r in client.get("/api/system").json()} == set(manager.services)
+
+
+def test_log_tail_reads_only_the_end_of_a_long_log_without_colours(manager, tmp_path):
+    (tmp_path / "logs" / "guidance.log").write_text(
+        "first line, far too old\n" + "x" * 200_000 + "\n\x1b[31mfailed\x1b[0m here\n\nlast\n"
+    )
+    assert manager.log_tail("guidance", 2) == ["failed here", "last"]
+    assert len(manager.log_tail("guidance", 500)) == 2  # The cut-off line is not shown.
+
+
+def test_processes_write_python_output_straight_through(tmp_path):
+    services = {"echo": ("Echo", "echo unbuffered=$PYTHONUNBUFFERED")}
+    manager = ProcessManager(services, tmp_path / "run", tmp_path / "logs")
+    manager.start("echo")
+    wait_state(manager, "echo", "stopped")
+    assert manager.log_tail("echo") == ["unbuffered=1"]
+
+
+def test_log_route_serves_a_known_process_only(manager, tmp_path, monkeypatch):
+    monkeypatch.delenv("ARIA_API_TOKEN", raising=False)
+    settings = Settings(data_dir=tmp_path / "data")
+    client = TestClient(create_app(settings, StubEngine(), load_model=False, system=manager))
+    assert client.get("/api/system/guidance/log").json() == {"exists": False, "lines": []}
+    (tmp_path / "logs" / "guidance.log").write_text("".join(f"line {i}\n" for i in range(300)))
+    body = client.get("/api/system/guidance/log").json()
+    assert body["exists"] and len(body["lines"]) == 200 and body["lines"][-1] == "line 299"
+    assert client.get("/api/system/nope/log").status_code == 404
+    assert client.get("/api/system/..%2F..%2Fsecret/log").status_code == 404

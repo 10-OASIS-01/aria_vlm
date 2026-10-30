@@ -128,7 +128,7 @@ function renderCamera(s){
   $("#live-camera-rate").textContent=source?`${c.hz.toFixed(1)} Hz · ${late?`last frame ${c.age_s.toFixed(1)} s ago`:"live"}`:"";
 }
 const MIC_STATES={listening:"Listening for Aria",speech:"Hearing speech",transcribing:"Transcribing",deaf:"Not listening: the glasses are speaking",talk:"Recording: Hold to talk",off:"Open mic off",no_audio:"No microphone audio"};
-const HEARD_OUTCOMES={no_words:"Sound, but no words recognized",no_aria:"Ignored: no Aria at the start",echo:"Ignored: the glasses' own words",failed:"Recognizer failed",hold:"Hold to talk",discard:"Ignored",start:"Started the trial",ask_goal:"Asked for the goal",cancel:"Cancelled the trial",finish:"Finished the trial",confirm:"Confirmed the task is complete",repeat:"Repeated the step",note:"Saved as a note",feedback:"Asked for a new step",listen:"Waiting for the next words",say:"Spoke a hint",none:"No action"};
+const HEARD_OUTCOMES={no_words:"Sound, but no words recognized",no_aria:"Ignored: no Aria",echo:"Ignored: the glasses' own words",failed:"Recognizer failed",hold:"Hold to talk",discard:"Ignored",start:"Started the trial",ask_goal:"Asked for the goal",cancel:"Cancelled the trial",finish:"Finished the trial",confirm:"Confirmed the task is complete",repeat:"Repeated the step",note:"Saved as a note",feedback:"Asked for a new step",listen:"Waiting for the next words",say:"Spoke a hint",none:"No action"};
 const IGNORED=new Set(["no_words","no_aria","echo","failed"]);
 function renderMic(s){
   const online=Boolean(s&&s.node_online),state=online?(s.mic||"none"):"none";
@@ -228,7 +228,7 @@ talkButton.addEventListener("keyup",(e)=>{if(e.key===" "||e.key==="Enter"){e.pre
 // D/H/N/R/F, and Space to talk: only in the Live view and only when focus is not on a control,
 // so Space still presses a focused button and typing never sends a command.
 const SHORTCUTS={d:"#live-done",h:"#live-help",n:"#live-notyet",r:"#live-repeat",f:"#live-yes"};
-const ownsKeys=(e)=>live.visible&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.target.closest("button,a,input,textarea,select,video,summary,[role=radio],[contenteditable]");
+const ownsKeys=(e)=>live.visible&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.target.closest("button,a,input,textarea,select,video,summary,.log-view,[role=radio],[contenteditable]");
 document.addEventListener("keydown",(e)=>{
   if(!ownsKeys(e))return;
   if(e.key===" "){e.preventDefault();if(!e.repeat)talk(true);return;}
@@ -262,8 +262,40 @@ function renderSystem(){
   $("#system-errors").hidden=!failed.length;
   $("#system-errors").innerHTML=failed.map(x=>`<div class="system-error"><p><strong>${esc(x.label)} didn't start:</strong> ${esc(cause(x.log))}</p><button type="button" class="text-button" data-dismiss="${esc(x.name)}" data-at="${x.started_at}">Dismiss</button><details><summary>Show log</summary><pre>${esc(x.log.join("\n"))}</pre></details></div>`).join("");
   $("#system-errors").querySelectorAll("[data-dismiss]").forEach(b=>b.onclick=()=>{system.dismissed[b.dataset.dismiss]=Number(b.dataset.at);renderSystem();});
+  renderLogTabs();
   tour.check();
 }
+const logs={name:"guidance",started:null};
+function renderLogTabs(){
+  const rows=Object.values(system.rows);
+  $("#log-tabs").innerHTML=rows.map(x=>`<button type="button" class="button light" data-log="${esc(x.name)}" aria-pressed="${x.name===logs.name}">${esc(x.label)}</button>`).join("");
+  $("#log-tabs").querySelectorAll("[data-log]").forEach(b=>b.onclick=()=>showLog(b.dataset.log));
+  // The panel opens on whatever just started, from this tab or another; a page load starts nothing.
+  const seen=logs.started;logs.started=Object.fromEntries(rows.map(x=>[x.name,x.started_at]));
+  const fresh=seen&&rows.find(x=>x.started_at&&x.started_at!==seen[x.name]);
+  if(fresh){$("#system-logs").open=true;showLog(fresh.name);}
+}
+function showLog(name){
+  logs.name=name;$("#log-view").textContent="";
+  $("#log-tabs").querySelectorAll("[data-log]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.log===name)));
+  loadLog();
+}
+async function loadLog(){
+  if(!$("#system-logs").open||!live.visible||document.hidden)return;
+  const name=logs.name,view=$("#log-view");
+  try{
+    const {exists,lines}=await api(`api/system/${encodeURIComponent(name)}/log`);
+    if(name!==logs.name)return;
+    const text=lines.join("\n")||(exists?"No output yet.":"Not started from this console, so there is no log here. Nodes run from VS Code or a terminal log there.");
+    if(view.textContent===text)return;
+    // Follow the end, unless the reader has scrolled up.
+    const follow=view.scrollHeight-view.scrollTop-view.clientHeight<24;
+    view.textContent=text;
+    if(follow)view.scrollTop=view.scrollHeight;
+  }catch{}
+}
+$("#system-logs").ontoggle=loadLog;
+setInterval(loadLog,1000);
 async function systemAction(name,action){
   try{system.rows=Object.fromEntries((await api(`api/system/${name}/${action}`,{method:"POST"})).map(x=>[x.name,x]));renderSystem();}
   catch(err){toast(err.message);}

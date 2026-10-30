@@ -29,7 +29,7 @@ from .schemas import (
     SessionCreate,
 )
 from .store import Conflict, Store
-from .system import ProcessManager, ros_services
+from .system import LOG_VIEW_LINES, ProcessManager, ros_services
 from .trial import (
     find_trial,
     list_trials,
@@ -87,7 +87,7 @@ def create_app(settings=None, engine=None, load_model=True, system=None):
     settings = settings or Settings()
     store = Store(settings.data_dir)
     engine = engine or QwenEngine(settings)
-    speech = SpeechRecognizer(settings.asr_model_path)
+    speech = SpeechRecognizer(settings.asr_model_path, settings.asr_language)
     started_at = time.time()
     web = Path(__file__).parent / "web"
     runs = settings.data_dir / "runs"
@@ -394,6 +394,13 @@ def create_app(settings=None, engine=None, load_model=True, system=None):
     @app.get("/api/system")
     def system_status():
         return system.status()
+
+    @app.get("/api/system/{name}/log")
+    def system_log(name: str):
+        """The end of one fixed process's log; the name is checked, so no path can be steered."""
+        if name not in system.services:
+            raise HTTPException(404, "Unknown process")
+        return {"exists": system.has_log(name), "lines": system.log_tail(name, LOG_VIEW_LINES)}
 
     @app.post("/api/system/{name}/{action}")
     def system_action(name: str, action: str):

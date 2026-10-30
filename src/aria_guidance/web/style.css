@@ -17,3 +17,9 @@
 .live-feed li[data-ignored=true] .feed-text{font-weight:400;color:var(--text)}
 .live-feed li[data-ignored=true] .feed-outcome{color:var(--muted)}
 .live-feed .live-feed-empty{display:block;border:0;padding:0;color:var(--muted)}
+.system-logs{flex-basis:100%;font-size:13px;min-width:0}
+.system-logs summary{cursor:pointer;font-weight:550;color:var(--ink);width:max-content;padding:4px 0}
+.log-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 8px}
+.log-tabs .button{min-height:32px;padding:4px 10px;font-size:13px}
+.log-tabs .button[aria-pressed=true]{background:var(--ink);color:var(--white);border-color:var(--ink)}
+.log-view{margin:0;padding:10px 12px;min-height:72px;max-height:260px;overflow:auto;border-radius:8px;background:#eef2ee;color:var(--ink);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}

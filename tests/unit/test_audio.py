@@ -1,7 +1,16 @@
+import sys
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
-from aria_guidance.audio import Endpointer, mono_to_wav, pcm32_to_mono, read_wav
+from aria_guidance.audio import (
+    Endpointer,
+    SpeechRecognizer,
+    mono_to_wav,
+    pcm32_to_mono,
+    read_wav,
+)
 
 
 def test_stereo_int32_downmixes_with_gain():
@@ -41,19 +50,19 @@ def test_endpointer_cuts_one_utterance_with_its_pre_roll():
     speech = [block(0.02) for _ in range(5)]
     assert feed(endpointer, *quiet, *speech) == []
     assert endpointer.speaking
-    [utterance] = feed(endpointer, *[block(0.001) for _ in range(8)])
+    [utterance] = feed(endpointer, *[block(0.001) for _ in range(12)])
     assert not endpointer.speaking
-    # 0.3 s of pre-roll (including the first loud block), 0.4 s more speech, 0.8 s of trail.
-    assert len(utterance) == pytest.approx(1.5 * 16000, abs=1600)
+    # 0.3 s of pre-roll (including the first loud block), 0.4 s more speech, 1.2 s of trail.
+    assert len(utterance) == pytest.approx(1.9 * 16000, abs=1600)
     assert utterance[0] == pytest.approx(0.001)
     assert utterance.max() == pytest.approx(0.02)
 
 
 def test_endpointer_drops_a_click_and_keeps_listening():
     endpointer = Endpointer()
-    assert feed(endpointer, block(0.5), *[block(0.0) for _ in range(9)]) == []
+    assert feed(endpointer, block(0.5), *[block(0.0) for _ in range(13)]) == []
     assert not endpointer.speaking
-    [_] = feed(endpointer, *[block(0.02) for _ in range(3)], *[block(0.0) for _ in range(8)])
+    [_] = feed(endpointer, *[block(0.02) for _ in range(3)], *[block(0.0) for _ in range(12)])
 
 
 def test_endpointer_caps_a_long_utterance_and_starts_the_next():
@@ -71,3 +80,34 @@ def test_endpointer_reset_forgets_speech_in_progress():
     endpointer.reset()
     assert not endpointer.speaking
     assert feed(endpointer, *[block(0.0) for _ in range(20)]) == []
+
+
+def test_a_pause_of_a_second_stays_in_one_utterance():
+    endpointer = Endpointer()
+    speech, pause = [block(0.02) for _ in range(5)], [block(0.0) for _ in range(10)]
+    assert feed(endpointer, *speech, *pause, *speech) == []
+    [utterance] = feed(endpointer, *[block(0.0) for _ in range(12)])
+    assert len(utterance) >= 2.0 * 16000
+
+
+class FakeWhisper:
+    """Records what SpeechRecognizer asks of faster-whisper."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def transcribe(self, samples, **kwargs):
+        FakeWhisper.calls.append(kwargs)
+        return [], SimpleNamespace(language="en")
+
+
+@pytest.mark.parametrize("language, expected", [("en", "en"), ("", None)])
+def test_recognizer_biases_toward_the_wake_word(tmp_path, monkeypatch, language, expected):
+    module = SimpleNamespace(WhisperModel=FakeWhisper)
+    monkeypatch.setitem(sys.modules, "faster_whisper", module)
+    FakeWhisper.calls = []
+    wav = mono_to_wav(np.full(16000, 0.1, dtype=np.float32), 16000)
+    SpeechRecognizer(str(tmp_path), language).transcribe(wav)
+    [call] = FakeWhisper.calls
+    assert call["language"] == expected and "Aria" in call["initial_prompt"]
+    assert "stop" not in call["initial_prompt"].lower()  # A repeated prompt must not end a trial.

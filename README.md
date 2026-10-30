@@ -169,7 +169,7 @@ Everything runs from the **Live** view, numbered in the picture at the top of th
 | 8 | Cancel task | Ends the task. Takes a second press. | |
 | 9 | Camera strip | Names the source (Aria glasses or TEST CAMERA) with its frame rate and age. | |
 
-Below the camera, **What the microphone hears** lists the last 20 utterances with what happened to each, including speech that was ignored. Its label says whether the system is listening or deaf because the glasses are speaking. Speech said while deaf never gets a transcript, so it does not appear in the list.
+Below the camera, **What the microphone hears** lists the last 20 utterances with what happened to each, including speech that was ignored. Its label says what the microphone is doing right now.
 
 ![A task moves from No goal yet through Observing and Thinking to Act on the instruction, and back, until the band asks Finished?](docs/img/task-loop.svg)
 
@@ -179,6 +179,7 @@ The words in the boxes are what the band says, with the matching state from `/gu
 - Replacing a running goal, Cancel task and stopping Guidance mid-task each take a second press within 4 seconds.
 - Commands are refused while `guidance_node` is not connected.
 - A process that fails shows its cause in one line, with the log one click away. The processes are fixed commands from `aria_guidance/system.py`, log to `.runtime/logs/`, and keep running across a backend restart.
+- **Process logs**, under the System row, shows the end of each process's output, updated every second. It opens by itself on whatever you just started. Nodes run from VS Code or a terminal log there instead, so they don't appear in it.
 
 The wearer can run the task by voice, as below, and the same task controls exist as ROS topics. [ROS control](docs/ros-control.md) has the terminal commands.
 
@@ -186,30 +187,30 @@ The console's other views are **Trials**, below, **Setup**, a short version of t
 
 ### Run a task by voice
 
-The glasses' microphone stays on, and "Aria" marks speech meant for the system. Speech that doesn't start with "Aria" is ignored unless the glasses just asked something.
+The glasses' microphone stays on, even while they speak, and "Aria" marks speech meant for the system. Other speech is ignored, apart from a bare `next`, `done` or `repeat` during a trial, and answers just after the glasses ask something.
 
 **Get ready.** Start the backend, then in the Live view press **Start** on Guidance and choose **Glasses**. Wait for the band to count 10 s of camera. The card **What the microphone hears**, under the camera view, should say *Listening for Aria*. Every trial saves all microphone audio, so tell people nearby.
 
 **How one command travels.**
 
-1. A pause of about 0.8 s ends what you said, and the node cuts it from the microphone stream.
-2. Whisper transcribes it, whatever it was, in about 1.5 s. It appears on the card.
-3. The node checks for "Aria" at the start. Exact words such as "Aria, stop" act at once.
+1. A pause of about 1.2 s ends what you said, and the node cuts it from the microphone stream.
+2. Whisper transcribes it, whatever it was, in about 0.7 s on the clips measured so far. It appears on the card.
+3. The node checks for "Aria". Exact words right after a leading "Aria", such as "Aria, stop", act at once.
 4. Anything else addressed in a running trial goes to the Qwen model, which picks a label from the words alone in about 0.3 s. The label picks an action, and a new step still looks at the camera.
-5. The glasses speak. The microphone is off until they should have finished, and the card says so.
+5. The glasses speak. The microphone stays on, so you can interrupt with "Aria, stop". Words that match what they are saying are dropped as their own voice, and the card shows "Ignored: the glasses' own words".
 
 **Example.** The goal is to put the mug on the white pad.
 
 | The wearer says | The card shows | What happens |
 | --- | --- | --- |
-| "Okay, where's that mug" | Ignored: no Aria at the start | Nothing |
+| "Okay, where's that mug" | Ignored: no Aria | Nothing |
 | "Aria, trial start, put the mug on the white pad" | Started the trial | The trial opens. The model looks at the last 10 s of camera, and the glasses say "Reach for the white mug, right in front of you." |
-| *(waits; the card says Not listening while the glasses speak)* | | |
+| *(does the step)* | | |
 | "Aria, I can't find it" | Asked for a new step · model said help | The glasses say "Okay", then give a more detailed step |
 | "Aria, hold on" | No action · model said ignore | Nothing |
-| "Aria, next" | Asked for a new step | The glasses say "Okay", then the next step |
+| "Next" | Asked for a new step | The glasses say "Okay", then the next step. A bare `next`, `done` or `repeat` needs no "Aria" during a trial |
 | "Aria, forget it" | Spoke a hint · model said cancel | The glasses say "Say Aria, stop to cancel." The trial keeps running: the model can never close one |
-| "Aria, next" | Asked for a new step | The glasses say "The task looks complete. Say done to confirm, or next to continue." |
+| "Well, Aria, next" | Asked for a new step | "Aria" within the first three words also counts, but only for asking, never for ending a trial. The glasses say "The task looks complete. Say done to confirm, or next to continue." |
 | "Done" (no "Aria" needed for 10 s after that question) | Confirmed the task is complete | The glasses say "Task complete." The trial closes as `completed` |
 
 **Words that act at once.** Each must be the whole phrase, after "Aria".
@@ -225,13 +226,16 @@ The glasses' microphone stays on, and "Aria" marks speech meant for the system. 
 | "Aria, note: *text*" | Saves a note in the trial |
 | "Aria" alone, then a pause | Your next words count as addressed, for 8 s |
 
+"Aria" must be the first word for anything that ends or replaces a trial, or `okay`, `ok`, `hey`, `hi`, `um` or `uh` may come before it. So "I said Aria, stop" reaches the model and at most gets a hint.
+
 **When nothing happens, read the card.**
 
 | The card shows | Why | Do this |
 | --- | --- | --- |
-| Nothing new, and the label said *Not listening* | The microphone was off while the glasses spoke, which also cuts off the start of a quick reply | Wait for *Listening for Aria*, then speak |
-| Ignored: no Aria at the start | "Aria" wasn't the first word ("Next, Aria next" doesn't count), or Whisper missed it | Say it again, with "Aria" first and clearly |
-| The goal is cut short, and the rest is ignored | You paused for about 0.8 s mid-sentence | Say "Aria, trial start, *goal*" in one breath. It replaces the wrong trial |
+| Nothing new, and the label says *Not listening* | `open_mic_deaf_while_speaking` is on, so the microphone is off while the glasses speak. It is off by default | Wait for *Listening for Aria*, then speak |
+| Ignored: no Aria | "Aria" wasn't in the first three words, or Whisper missed it | Say it again, with "Aria" first and clearly |
+| Ignored: the glasses' own words | Your words matched what the glasses were saying | Wait for them to finish. If this shows their voice with nobody talking, the microphone is picking them up: set `open_mic_deaf_while_speaking: true` |
+| The goal is cut short, and the rest is ignored | You paused for more than about 1.2 s mid-sentence | Say "Aria, trial start, *goal*" in one breath. It replaces the wrong trial |
 | Sound, but no words recognized | A click, or speech too quiet to recognize | Say it again, louder |
 | Spoke a hint | The model thinks you want to stop or finish, and only exact words do that | Say "Aria, stop" or "Aria, finish" |
 | No microphone audio | The glasses aren't streaming sound | Check the glasses and restart the camera |
@@ -281,6 +285,7 @@ Every backend setting lives in `.env`, with the defaults in [.env.example](.env.
 | --- | --- | --- |
 | `ARIA_MODEL_PATH` | `./models/Qwen3.5-9B` | Model folder or hub name |
 | `ARIA_ASR_MODEL_PATH` | `./models/faster-whisper-small` | Speech model; empty for typed goals only |
+| `ARIA_ASR_LANGUAGE` | `en` | Speech language; empty auto-detects, which misreads short clips and is slower |
 | `HF_HOME` | `./models/hf-cache` | Hugging Face cache |
 | `ARIA_DATA_DIR` | `./.runtime` | Logs, sessions and saved plans |
 | `CUDA_VISIBLE_DEVICES`, `ARIA_DEVICE` | `0`, `cuda:0` | The GPU to use |
@@ -295,6 +300,8 @@ Every backend setting lives in `.env`, with the defaults in [.env.example](.env.
 | `ARIA_SESSIONS_DIR` | `../aria2_ros2/data/sessions` | Where the backend looks for trials |
 | `ARIA_FASTDDS_PROFILE` | empty | Fast DDS profile with large buffers; without one, 640x480 frames may drop |
 | `ARIA_FAKE_IMAGE` | empty | Still image for the test camera; empty plays a moving test pattern |
+
+In `guidance.yaml`, `open_mic_silence_seconds` (1.2) is the pause that ends an utterance, and `open_mic_deaf_while_speaking` (false) turns the microphone off while the glasses speak, for a room or volume where it picks up their voice.
 
 Keep machine-specific paths, tokens and tunnels in `.env` or another excluded file. `scripts/build_release.py` packages source and documentation using an explicit allowlist, which excludes model weights, recorded sessions and local configuration.
 

@@ -91,6 +91,13 @@ def test_echo_needs_three_words_found_in_the_last_speech():
     assert not is_echo("Or next to continue.", None)
 
 
+def test_speech_during_playback_is_an_echo_from_two_words_even_with_aria():
+    assert is_echo("Aria, stop.", SAY_CANCEL, during_speech=True)
+    assert is_echo("to cancel", SAY_CANCEL, during_speech=True)
+    assert not is_echo("Aria, finish", SAY_CANCEL, during_speech=True)  # Interrupting still works.
+    assert not is_echo("stop", SAY_CANCEL, during_speech=True)
+
+
 @pytest.mark.parametrize("hint", [SAY_START, SAY_CANCEL, SAY_FINISH])
 def test_doing_what_a_hint_says_is_not_an_echo(hint):
     assert not is_echo(hint.split("Say ")[1], hint)
@@ -158,6 +165,68 @@ def test_exact_words_confirm_a_completion_proposal(text):
     window = None if text.startswith("Aria") else "reply"
     task = running("done_proposed")
     assert interpret(text, task, window)[0] == "confirm"
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Next. Aria, next.", ("feedback", "next.")),
+        ("Oh wait, Aria, done", ("feedback", "done")),
+        ("So Arya, repeat", ("repeat", "repeat")),
+        ("Okay so Aria, note: it slipped", ("note", "it slipped")),
+        ("Hey there Aria, I can't find it", ("classify", "I can't find it")),
+        # Never closes, replaces or starts: these reach the classifier, which can't either.
+        ("I said Aria, stop", ("classify", "stop")),
+        ("Wait, Aria, cancel", ("classify", "cancel")),
+        ("So, Aria, finish", ("classify", "finish")),
+        ("So, Aria, trial end", ("classify", "trial end")),
+        ("So Aria, trial start, stack the cups", ("classify", "trial start, stack the cups")),
+        ("So Aria, goal: stack the cups", ("classify", "goal: stack the cups")),
+        ("I told Aria", ("discard", "")),
+        # Too far in, or a word that sounds like it.
+        ("I think I told Aria, stop", ("discard", "")),
+        ("In that area, stop", ("discard", "")),
+        ("Tell Maria, stop", ("discard", "")),
+        ("Those arias, next", ("discard", "")),
+    ],
+)
+def test_soft_wake_word_during_a_task(text, expected):
+    assert interpret(text, running()) == expected
+
+
+def test_soft_wake_word_does_not_confirm_or_start():
+    assert interpret("Well Aria, done", running("done_proposed")) == ("classify", "done")
+    assert interpret("So, Aria, trial start, go", Task()) == ("say", SAY_START)
+    assert interpret("I told Aria", Task()) == ("discard", "")
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Next.", ("feedback", "Next.")),
+        ("done", ("feedback", "done")),
+        ("Repeat!", ("repeat", "Repeat!")),
+        # Only the whole utterance counts, and never a word that ends the trial.
+        ("next week maybe", ("discard", "")),
+        ("I'm done", ("discard", "")),
+        ("stop", ("discard", "")),
+        ("finish", ("discard", "")),
+        ("yes", ("discard", "")),
+    ],
+)
+def test_bare_step_words_need_no_aria_during_a_task(text, expected):
+    assert interpret(text, running()) == expected
+
+
+@pytest.mark.parametrize("text", ["next", "done", "repeat"])
+def test_bare_step_words_do_nothing_while_idle(text):
+    assert interpret(text, Task()) == ("discard", "")
+
+
+def test_bare_next_declines_a_completion_proposal_and_bare_done_does_not_close():
+    task = running("done_proposed")
+    assert interpret("next", task) == ("feedback", "next")
+    assert interpret("done", task) == ("discard", "")
 
 
 def test_unaddressed_words_do_not_confirm_after_the_window():

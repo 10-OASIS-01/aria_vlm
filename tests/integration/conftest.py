@@ -112,8 +112,8 @@ class Probe(Node):
 
 @pytest.fixture(scope="session", autouse=True)
 def ros():
-    # A domain of its own, so live glasses on domain 42 never reach the tests.
-    os.environ["ROS_DOMAIN_ID"] = "77"
+    # A domain of its own, so live glasses on domain 42 and a concurrent test run never reach it.
+    os.environ["ROS_DOMAIN_ID"] = str(78 + os.getpid() % 20)
     os.environ["ROS_LOCALHOST_ONLY"] = "1"
     rclpy.init()
     yield
