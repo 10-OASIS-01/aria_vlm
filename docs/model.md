@@ -27,3 +27,12 @@ python scripts/replay_eval.py --cases .runtime/eval_cases.json \
 ```
 
 Each case names a saved plan whose frames are replayed (`.runtime/runs/<plan id>/`), the goal and dialogue, the expected status and words that must appear. The docstring of [replay_eval.py](../scripts/replay_eval.py) gives the format. Stop the backend first, or make sure the GPU has room for a second copy of the model.
+
+To score a change against recorded glasses trials, replay every decision point of the labelled trials in `scripts/trial_labels.json`:
+
+```bash
+python scripts/replay_eval.py --trials scripts/trial_labels.json --split dev
+python scripts/replay_eval.py --trials scripts/trial_labels.json --split heldout --prompt-file new=path/to/prompt.txt
+```
+
+Each point gets the frames and the history guidance_node sent, with the `.env` input mode and pixel budget. The summary counts the same step given again after it was done or rejected, DONE before the goal was met, no DONE when it was met, and wrong CHECK lines. Tune on `dev`; score `heldout` once, at the end. Trials are read from `../aria2_ros2/data/sessions` (`--sessions` changes it).

@@ -2,6 +2,65 @@
 
 Newest first. Each entry names its commit. Add an entry with every change that affects behavior, configuration or deployment.
 
+## 2026-11-02: Re-plan a corrected step, prompt matches the history, labelled trial replay (commit "Re-plan when a corrected step comes back")
+
+The model still gave a corrected step again: "there's only a rightmost platform" was answered with "place it in the bottom white platform" (`20261031T172146Z_fe9e7ed8/trials/01_112223`), and "same color" with the orange container (`20261031T174927Z_e77c71e4/trials/01_115023`).
+
+**Changed behavior**
+- After a plan, the engine asks the model whether the new `SAY` is the same step as the last one. If it is and the intent classifier labels the person's reply `correction`, it plans once more with the reply and "do not give that step again" added. A second repeat is replaced by "That step does not seem to work. What should be different?". `help` replies are left alone, since they ask for the same step in more detail.
+- `proposal` gains `guard: "repeat"` and `replaced` (the dropped `SAY`) when this happens; `timings` gains `guard_ms`.
+- The prompt describes the history it gets: "your earlier SAY lines and the person's replies", and CHECK asks whether the step of the last `SAY` was done (was: the `EXPECT` of the last answer, which the history no longer holds).
+
+**Added**
+- `scripts/replay_eval.py --trials scripts/trial_labels.json --split dev|heldout`: replays every decision point of recorded trials and scores them against hand labels.
+- `scripts/trial_labels.json`: labels for 10 trials from October 30 and 31, split into dev (4 trials, 19 points) and held out (6 trials, 33 points).
+- `tests/unit/test_engine_guard.py`.
+
+**Measured** (RTX 5090, held out, scored once)
+- Same step again after it was done or rejected: 0/23 (fix A and B alone: 2/23). DONE too early: 0/26 (0/26). Missed DONE: 1/7 (1/7). Wrong CHECK: 4/23 (5/25).
+- 2.6 s per plan (2.4 s). The same-step check runs on every plan after a reply; the second plan only on a correction (2 of 33 points).
+- Dev: repeats 0/12, DONE too early 0/13 (1/13 with the old wording), missed DONE 2/3.
+- The earlier wording change "tried and not kept" on 2026-10-31 also told the model to decide from the newest moment only; this one changes only the two lines that describe the history.
+- Not kept: a belief loop that checked goal facts one by one as true or false on the current image. It never proposed DONE on the 7 finished held-out tasks and took 5.9 s per plan. Details in `docs/repeat-investigation.md`.
+
+**Upgrade notes**
+- Restart the backend: the guard and the prompt live in the engine. guidance_node needs no change.
+
+## 2026-10-31: Current scene image, where questions, top and bottom (commit "Answer where questions with left, right, top and bottom")
+
+Asked "is the orange pen below the green mug?", the model answered "right of the green mug" twice and never said whether the guess was right (`.runtime/guidance/20261031T105424/trials/01_113735`, `20261031T174927Z_e77c71e4/trials/02_115138`). The prompt gave it only left, right and ahead, and on a table everything is ahead.
+
+**Changed behavior**
+- The newest frame goes in again as one still image after the clip, labeled as the current scene. CHECK and EVIDENCE are decided from it. In the clip it shares a temporal patch with the frame before it.
+- Locations are left or right, top (farther) or bottom (nearer), and a landmark: "bottom right, below the blue tray". "Below" and "under" mean bottom; "above" and "behind" mean top.
+- A question about where something is gets answered first, then the step; INSPECT when it is out of view.
+
+**Measured**
+- Not replayed. Live trials on 2026-10-31 after the change follow the steps better.
+- Tried and not kept: a rule to start SAY with "Yes" or "No" for a yes/no question. In live trials the model still did not answer yes or no.
+- Still failing: a finished step repeated after "done" (green pen already in the green mug), and the correction "same color" ignored (`20261031T174927Z_e77c71e4/trials/01_115023`).
+
+**Upgrade notes**
+- Restart the backend: it reads the prompt at startup.
+
+## 2026-10-31 — History holds only the spoken line again (commit "Keep only the spoken line in the dialogue history")
+
+In the October 30 earbud demo (`20261030T211037Z_cdcaa6a4/trials/03_151717`), the mug was on the iPad and the earbuds on the black tray, but after each "done" the model answered "Pick up the grey earbuds from the white platform…" word for word, three times. Its history held its whole previous answer, and it copied that answer's `EVIDENCE` line ("earbuds still on white platform") instead of reading the scene.
+
+**Changed behavior**
+- Assistant turns in the history are the spoken `SAY` line again, in guidance_node and in workbench sessions. This reverts that part of "Have Qwen check its last step and keep a plan"; the seven-line output and `proposal` are unchanged.
+
+**Measured** (the running backend's `/v1/plan`, 17 replay cases plus 5 moments from the October 30 earbud trials)
+- Spoken line only: 18/22. Whole answer: 17/22.
+- Both demo moments where the task was finished now propose DONE; with the whole answer both repeated the earbud step.
+- `pen-mug-control` now fails: the model does not see the orange pen in the mug. It failed the same way before the whole-answer change.
+- Still failing either way: `estop-visible`, `pens-help`, `correction-replan`. In the demo, corrections such as "there's already a mug there" were also ignored.
+- The prompt still says the history holds every line of earlier answers; it was measured as is.
+- Tried and not kept: a rule to decide what is where from the newest moment only, never from earlier lines, plus an `INPUT` line matching the new history. 15/22 against 18/22. The model then declared the pens task done with the blue pen still on the mat (`pens-step2`, `verify-passed`), and asked where the objects were in one finished demo moment.
+
+**Upgrade notes**
+- Restart guidance_node (it owns the history). The backend needs a restart only for workbench sessions.
+
 ## 2026-10-30 — Trial latency records and report (commit "Record speech timing in trials and report latency")
 
 The hardware checklist asks for each latency separately. Trials kept HTTP and model times, but dropped open-mic STT timing, kept no speech times, and left a spoken goal's transcript out of the trial it opened.

@@ -16,13 +16,14 @@ LOGGER = logging.getLogger(__name__)
 SYSTEM_PROMPT = """ROLE: You guide a person wearing a head camera through a physical task,
 one step at a time. They only hear your SAY line.
 
-INPUT: The goal, the dialogue so far with all the lines of your earlier answers, and the last
-10 seconds of camera view, oldest first. The newest moment is the current scene; earlier
-moments show progress.
+INPUT: The goal, the dialogue so far (your earlier SAY lines and the person's replies), the last
+10 seconds of camera view, oldest first, and then one still image of the current scene, taken
+after the person last spoke. Decide CHECK and EVIDENCE from that image; earlier moments show
+progress.
 
 OUTPUT: exactly these seven lines in this order, no markdown. Each line decides the next.
 
-CHECK: Is the EXPECT of your last answer true in the newest moment? "yes", "no", "unknown" if
+CHECK: Was the step of your last SAY done, judged from the current scene image? "yes", "no", "unknown" if
 it is out of view or hidden, or "none" if you have no earlier answer. The person saying "done"
 is a claim, not proof.
 EVIDENCE: What you see now that decides this step, at most 20 words.
@@ -36,8 +37,9 @@ MODE: One of:
 - REPLAN: new evidence or the person's correction breaks your PLAN; give the new step.
 - DONE: every object and destination in the goal is visibly in place now.
 SAY: The words for the person, 10 to 40 words, in the language of the goal.
-- Name the object by colour or shape and say where it is from the person's view (left, right,
-  ahead, next to a landmark). For a placement, name the destination the same way.
+- Name the object by colour or shape and say where it is in the person's view: left or right,
+  top (farther away) or bottom (nearer to them), and next to which landmark, e.g. "bottom
+  right, below the blue tray". For a placement, name the destination the same way.
 - Add how only when it is not obvious: which hand, how to grip, what to open first.
 - If the goal is a question that needs no physical action, use ACT and answer it here.
 EXPECT: What should be visibly true after this step, at most 15 words.
@@ -49,6 +51,10 @@ REPLIES:
   give the step again in other words.
 - A request for help: stay on the same step and give more detail: smaller motions, a landmark,
   and what they should see when it works.
+- A question about where something is: answer it first from the newest moment. Name the object
+  and where it is in the person's view (left, right, top, bottom) and next to which landmark. "Below"
+  or "under" means bottom of, nearer to them; "above" or "behind" means top of, farther away. If you
+  cannot see it, say so and use INSPECT. Then give the step.
 - A correction: follow it, even over your earlier steps, and use REPLAN if it changes the plan.
 - Never repeat your previous SAY word for word.
 - If the person says something is missing or the goal is not complete, it is not complete.
@@ -70,6 +76,13 @@ cancel: they want to give up on the whole task. "forget it", "never mind all of 
 finish: they say the whole task is finished. "that's everything", "we're all done here"
 ignore: not a request to the guide. "hold on", "one second", thinking aloud"""
 INTENT_MAX_TOKENS = 6
+
+SAME_STEP_PROMPT = """Two instructions given to a person doing a physical task. Do they ask for
+the same physical action on the same object with the same destination? Ignore wording, location
+hints and politeness. A question or a request to look is never the same as an action. Answer yes
+or no."""
+# Spoken when the model gives a corrected step again even after being told not to.
+REPEAT_FALLBACK = "That step does not seem to work. What should be different?"
 # A plan takes about 2 s; wait for it rather than refuse speech that arrives meanwhile.
 INTENT_WAIT_SECONDS = 15.0
 
@@ -218,9 +231,55 @@ class QwenEngine:
         if not self.lock.acquire(blocking=False):
             raise ModelBusy("One inference is already running; retry after it finishes")
         try:
-            return self._generate(goal, history, images, timestamps)
+            return self._guard_repeat(
+                goal, history, images, timestamps, self._generate(goal, history, images, timestamps)
+            )
         finally:
             self.lock.release()
+
+    def _guard_repeat(self, goal, history, images, timestamps, first):
+        """Re-plans once when the person corrected the last step and the answer gives it again.
+
+        Returns:
+            first, or the re-planned Generation with proposal["guard"] = "repeat" and
+            proposal["replaced"] = the SAY that was dropped.
+        """
+        if len(history) < 2 or history[-1]["role"] != "user" or history[-2]["role"] != "assistant":
+            return first
+        started = time.perf_counter()
+        last_say, reply = history[-2]["text"], history[-1]["text"]
+        first.timings["guard_ms"] = 0.0
+        if first.status == "done_proposed" or not self._same_step(first.instruction, last_say):
+            first.timings["guard_ms"] = finite_ms((time.perf_counter() - started) * 1000)
+            return first
+        # "help" asks for the same step in more detail, so only a correction counts.
+        if self._classify(reply, goal, "awaiting_feedback", last_say)["label"] != "correction":
+            first.timings["guard_ms"] = finite_ms((time.perf_counter() - started) * 1000)
+            return first
+        dropped = first.instruction
+        note = (
+            f'The person rejected your last instruction ("{last_say}") and said: "{reply}". '
+            "Do not give that step again. Follow what they said, with REPLAN, ASK or INSPECT."
+        )
+        try:
+            second = self._generate(goal, history, images, timestamps, note)
+            repeated = second.status != "done_proposed" and self._same_step(
+                second.instruction, last_say
+            )
+        except ValueError:  # An unusable second answer is no reason to repeat the first.
+            second, repeated = first, True
+        if repeated:
+            second.instruction, second.status = REPEAT_FALLBACK, "clarification"
+        second.proposal.update(guard="repeat", replaced=dropped)
+        second.timings["guard_ms"] = finite_ms((time.perf_counter() - started) * 1000)
+        return second
+
+    def _same_step(self, a: str, b: str) -> bool:
+        """Whether two instructions ask for the same action; text only, the lock must be held."""
+        if _normalized(a) == _normalized(b):
+            return True
+        raw, _, _ = self._complete(SAME_STEP_PROMPT, f"A: {a}\nB: {b}", 3)
+        return raw.strip().lower().startswith("yes")
 
     def classify(self, text: str, goal: str, state: str, instruction: str) -> dict:
         """Labels one utterance from text alone. Waits for a running plan instead of refusing.
@@ -238,17 +297,13 @@ class QwenEngine:
         finally:
             self.lock.release()
 
-    def _classify(self, text, goal, state, instruction):
+    def _complete(self, system, text, max_new_tokens):
+        """One greedy text-only answer. Returns (text, input tokens, output tokens)."""
         import torch
 
-        started = time.perf_counter()
-        context = [f"Goal: {goal or '(none)'}", f"Last instruction: {instruction or '(none)'}"]
-        if state == "awaiting_confirmation":
-            context.append("The guide just asked them whether the task is complete.")
-        context.append(f"They said: {text}")
         messages = [
-            {"role": "system", "content": INTENT_PROMPT},
-            {"role": "user", "content": [{"type": "text", "text": "\n".join(context)}]},
+            {"role": "system", "content": system},
+            {"role": "user", "content": [{"type": "text", "text": text}]},
         ]
         prompt = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
@@ -256,20 +311,31 @@ class QwenEngine:
         inputs = self.processor(text=[prompt], return_tensors="pt").to(self.model.device)
         with torch.inference_mode():
             outputs = self.model.generate(
-                **inputs, max_new_tokens=INTENT_MAX_TOKENS, do_sample=False, use_cache=True
+                **inputs, max_new_tokens=max_new_tokens, do_sample=False, use_cache=True
             )
         input_tokens = inputs["input_ids"].shape[1]
         generated = outputs[0, input_tokens:]
         raw = self.processor.decode(generated, skip_special_tokens=True).strip()
+        return raw, input_tokens, len(generated)
+
+    def _classify(self, text, goal, state, instruction):
+        started = time.perf_counter()
+        context = [f"Goal: {goal or '(none)'}", f"Last instruction: {instruction or '(none)'}"]
+        if state == "awaiting_confirmation":
+            context.append("The guide just asked them whether the task is complete.")
+        context.append(f"They said: {text}")
+        raw, input_tokens, output_tokens = self._complete(
+            INTENT_PROMPT, "\n".join(context), INTENT_MAX_TOKENS
+        )
         return {
             "label": parse_label(raw),
             "raw_output": raw,
             "input_tokens": input_tokens,
-            "output_tokens": len(generated),
+            "output_tokens": output_tokens,
             "timings": {"model_ms": finite_ms((time.perf_counter() - started) * 1000)},
         }
 
-    def _generate(self, goal, history, images, timestamps):
+    def _generate(self, goal, history, images, timestamps, note=""):
         import torch
         from transformers.generation.streamers import BaseStreamer
 
@@ -308,12 +374,16 @@ class QwenEngine:
                         {"type": "image"},
                     ]
                 )
+        # The newest frame again on its own: in the clip it shares a temporal patch with the
+        # frame before it, and the model repeated steps the person had already done.
+        content.append({"type": "text", "text": "Current scene, right after the person's last words:"})
+        content.append({"type": "image"})
         # Restate the goal after the visual block so it is not lost behind its many tokens.
         content.append(
             {
                 "type": "text",
-                "text": f"Goal: {goal}\nGiven the current scene (the newest moment), reply in the "
-                "OUTPUT format.",
+                "text": f"Goal: {goal}\nUse the current scene image to check whether your last "
+                "step was done, then reply in the OUTPUT format." + (f"\n{note}" if note else ""),
             }
         )
         messages = [
@@ -333,9 +403,14 @@ class QwenEngine:
                 width=images[-1].width,
                 height=images[-1].height,
             )
-            visual = {"videos": [images], "video_metadata": [metadata], "do_sample_frames": False}
+            visual = {
+                "videos": [images],
+                "video_metadata": [metadata],
+                "do_sample_frames": False,
+                "images": [images[-1]],
+            }
         else:
-            visual = {"images": images}
+            visual = {"images": images + [images[-1]]}
         inputs = self.processor(text=[prompt], return_tensors="pt", **visual)
         if video:
             # The processor emits one "<t seconds>"-prefixed token group per temporal patch, but

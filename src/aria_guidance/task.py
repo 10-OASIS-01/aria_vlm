@@ -23,7 +23,6 @@ FINISH_WORDS = {
 # Saying so explicitly stops the model from repeating DONE (a bare "Next." did not, in replay).
 REJECTION = "No, the goal is not complete yet. "
 MAX_HISTORY = 24
-MAX_TURN_CHARS = 1500  # schemas.Turn rejects anything longer.
 
 
 def parse_reply(text, task):
@@ -85,8 +84,9 @@ class Task:
             return False
         done = result["status"] == "done_proposed"
         self.state = "awaiting_confirmation" if done else "awaiting_feedback"
-        # The whole answer, so the next plan can check its EXPECT and keep its PLAN.
-        self.add("assistant", (result.get("raw_output") or result["instruction"])[:MAX_TURN_CHARS])
+        # Only what was spoken: given its whole answer, the model copied its old EVIDENCE line
+        # into the next plan and repeated a step that was already done.
+        self.add("assistant", result["instruction"])
         self.last = result
         return True
 

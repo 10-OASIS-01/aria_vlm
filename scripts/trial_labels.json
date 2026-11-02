@@ -1,0 +1,79 @@
+{
+ "_schema": "per decision node n (plan_request index): reply = the person's reply to the instruction of node n-1 (none/done/question/correction); prev_done = was that previous instruction carried out, judged from node n's last frame (null: first node or not visible); rejected = the reply says the previous instruction cannot or should not be done; goal_met = goal reached in node n's last frame (null: not visible)",
+ "dev": {
+  "20261030T211037Z_cdcaa6a4/trials/03_151717": [
+   {"reply": "none", "prev_done": null, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false, "note": "mug on iPad case (left); earbuds still on platform"},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": true, "note": "platform clear; earbuds in black stand (right)"},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": true},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": null, "note": "camera covered"}
+  ],
+  "20261030T211037Z_cdcaa6a4/trials/01_151144": [
+   {"reply": "none", "prev_done": null, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false, "note": "mug on small white pegboard (left)"},
+   {"reply": "correction", "prev_done": false, "rejected": true, "goal_met": false, "note": "no space on the white platform"},
+   {"reply": "done", "prev_done": false, "rejected": false, "goal_met": false, "note": "mug moved to black stand; earbuds (second half of the step) still on platform"},
+   {"reply": "correction", "prev_done": false, "rejected": true, "goal_met": false, "note": "cannot put both on black tray"},
+   {"reply": "correction", "prev_done": false, "rejected": true, "goal_met": false, "note": "mug already on tray, earbuds cannot go there"},
+   {"reply": "done", "prev_done": null, "rejected": false, "goal_met": null, "note": "camera covered"},
+   {"reply": "done", "prev_done": null, "rejected": false, "goal_met": null, "note": "camera covered"}
+  ],
+  "20261031T174927Z_e77c71e4/trials/01_115023": [
+   {"reply": "none", "prev_done": null, "rejected": false, "goal_met": false},
+   {"reply": "correction", "prev_done": false, "rejected": true, "goal_met": false, "note": "green pen must go to the green-lined mug, not the orange container"}
+  ],
+  "20261031T180348Z_f00c2fc2/trials/02_121658": [
+   {"reply": "none", "prev_done": null, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": true}
+  ]
+ },
+ "heldout": {
+  "20261031T174927Z_e77c71e4/trials/02_115138": [
+   {"reply": "none", "prev_done": null, "rejected": false, "goal_met": false},
+   {"reply": "question", "prev_done": false, "rejected": false, "goal_met": false, "note": "where is the green pen"},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false},
+   {"reply": "question", "prev_done": false, "rejected": false, "goal_met": false, "note": "where is the blue pen"},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false},
+   {"reply": "question", "prev_done": false, "rejected": false, "goal_met": false, "note": "is the orange pen below the mug"},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": true},
+   {"reply": "correction", "prev_done": null, "rejected": true, "goal_met": true, "note": "green pen already in mug; recorded instruction was nonsense"}
+  ],
+  "20261031T180348Z_f00c2fc2/trials/01_120414": [
+   {"reply": "none", "prev_done": null, "rejected": false, "goal_met": false},
+   {"reply": "question", "prev_done": false, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": true}
+  ],
+  "20261031T172146Z_fe9e7ed8/trials/01_112223": [
+   {"reply": "none", "prev_done": null, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false, "note": "orange went on the centre platform, not the rightmost; goal-wise fine"},
+   {"reply": "correction", "prev_done": false, "rejected": true, "goal_met": false, "note": "no bottom platform; only the rightmost one is empty"},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": true}
+  ],
+  "20261031T172146Z_fe9e7ed8/trials/03_113008": [
+   {"reply": "none", "prev_done": null, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": true}
+  ],
+  "20261031T161921Z_650f826d/trials/03_102307": [
+   {"reply": "none", "prev_done": null, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false, "note": "person is holding the mug in the air"},
+   {"reply": "question", "prev_done": true, "rejected": false, "goal_met": false, "note": "asks where to move the mug"},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false, "note": "mug on iPad"},
+   {"reply": "correction", "prev_done": false, "rejected": true, "goal_met": false, "note": "cable can only go to the black case"},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": true}
+  ],
+  "20261030T185934Z_39987cfb/trials/02_131010": [
+   {"reply": "none", "prev_done": null, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": false},
+   {"reply": "done", "prev_done": true, "rejected": false, "goal_met": true}
+  ]
+ }
+}
