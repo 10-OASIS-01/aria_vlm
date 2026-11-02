@@ -15,7 +15,7 @@ This checklist is for Hitesh and Matthew's lab test. The notebook's rendered tri
 
 Use a red mug, a round coaster, a blue book and an open tray. Place the mug and book on a white work mat. Goal: “Clear the white work mat by placing the red mug on the brown round coaster and the blue book inside the open tray.”
 
-1. Speak the goal using push-to-talk; save the recognized transcript.
+1. Speak the goal ("Aria, trial start, ...", or push-to-talk); save the recognized transcript.
 2. Wait for a complete observation window and the first audible instruction.
 3. Perform exactly that action, then say `done`.
 4. Repeat until Qwen declares completion, or stop and record the reason for failure.
@@ -40,5 +40,15 @@ Place three colored cubes and three matching trays on a table. Goal: “Put each
 Record the task, participant/run identifier, device/ROS configuration, goal transcript, session ID, per-step instructions, user feedback, physical completion judgement, interventions and failure reasons. Preserve the Aria recording using the existing lab recording workflow and the backend session export.
 
 Measure separately: observation collection, STT, model inference, HTTP round trip and time to audible TTS. Use a synchronized recording for the complete spoken-goal-to-audible-instruction metric. Backend timestamps alone cannot establish the speaker's playback latency.
+
+After each trial, run `python scripts/trial_latency.py <trial folder>`. It prints every latency up to the TTS publish and saves them as `latency.json` in the trial folder. STT and speech times appear only for spoken goals and spoken replies. A goal typed in the console has none.
+
+Time to audible TTS comes from a phone recording, not from the trial folder:
+
+1. Film the whole trial with a phone close enough to hear both the speaker and the glasses. A single recording needs no clock sync.
+2. In the recording, measure from the first word of the spoken goal to the first word of the first instruction. This is the spoken-goal-to-audible-instruction latency.
+3. Subtract the report's `goal to TTS publish ... from speech start`. The rest is the time from publishing the TTS to hearing it. Repeat over several instructions, because one sample says little.
+
+Do not read this from `audio.pcm`. In the first recorded trial (`20261030T202050Z_cec25f87/trials/01_142231`), the microphones did not pick up the 21-word instruction after it was published, and the only loud sound in that time was a person. A loudness search there reports that person as the speaker. Nothing confirms the instruction played in that trial, so if a later recording does show it, measure it against the phone before relying on it.
 
 The October 26 integration deliverable is several examples of **human** multi-step completion and measured wearable latency. Count hardware integration as validated only after retaining that evidence.

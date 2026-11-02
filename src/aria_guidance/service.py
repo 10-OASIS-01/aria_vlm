@@ -10,15 +10,34 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from .audio import SpeechRecognizer
 from .config import Settings
 from .engine import ModelBusy, QwenEngine
 from .frames import decode_image, encode_jpeg
-from .schemas import ClientEvent, Feedback, PlanRequest, SessionCreate
+from .live import LiveRelay
+from .schemas import (
+    ClientEvent,
+    Feedback,
+    IntentRequest,
+    LiveCommand,
+    PlanRequest,
+    PlanV1,
+    Review,
+    SessionCreate,
+)
 from .store import Conflict, Store
+from .system import LOG_VIEW_LINES, ProcessManager, ros_services
+from .trial import (
+    find_trial,
+    list_trials,
+    read_trial,
+    trial_captions,
+    trial_video,
+    write_review,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -64,17 +83,24 @@ class RequestGuard:
         await self.app(scope, replay, send)
 
 
-def create_app(settings=None, engine=None, load_model=True):
+def create_app(settings=None, engine=None, load_model=True, system=None):
     settings = settings or Settings()
     store = Store(settings.data_dir)
     engine = engine or QwenEngine(settings)
-    speech = SpeechRecognizer(settings.asr_model_path)
+    speech = SpeechRecognizer(settings.asr_model_path, settings.asr_language)
     started_at = time.time()
     web = Path(__file__).parent / "web"
     runs = settings.data_dir / "runs"
     runs.mkdir(exist_ok=True)
     reports = settings.data_dir / "reports"
     reports.mkdir(exist_ok=True)
+    trial_roots = [settings.sessions_dir, settings.data_dir / "guidance"]
+    live = LiveRelay()
+    system = system or ProcessManager(
+        ros_services(settings, Path(__file__).resolve().parents[2]),
+        settings.data_dir / "run",
+        settings.data_dir / "logs",
+    )
 
     @asynccontextmanager
     async def lifespan(app):
@@ -159,6 +185,74 @@ def create_app(settings=None, engine=None, load_model=True):
         for i, image in enumerate(images):
             (target / f"{i:02d}.jpg").write_bytes(encode_jpeg(image))
 
+    async def checked_images(body, live, received_at_ms):
+        if engine.state != "ready":
+            raise HTTPException(503, "Model is loading or unavailable; check /api/ready")
+        if engine.status().get("busy"):
+            raise HTTPException(429, "One inference is already running; retry after it finishes")
+        if live and settings.max_frame_age_ms:
+            age = received_at_ms - body.frames[-1].timestamp_ms
+            if not -3000 <= age <= settings.max_frame_age_ms:
+                raise HTTPException(
+                    422,
+                    f"Newest frame is {age / 1000:.1f} s old (allowed -3.0 to "
+                    f"{settings.max_frame_age_ms / 1000:.1f} s); check the camera stream and "
+                    "synchronize the client and server clocks",
+                )
+        try:
+            return await asyncio.to_thread(
+                lambda: [decode_image(f.image_base64) for f in body.frames]
+            )
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+
+    @app.post("/v1/plan")
+    async def plan_v1(body: PlanV1):
+        """Stateless step: the caller (guidance_node) owns the task state."""
+        started = time.perf_counter()
+        received_at_ms = time.time() * 1000
+        images = await checked_images(body, body.live, received_at_ms)
+        history = [t.model_dump() for t in body.history]
+        timestamps = [f.timestamp_ms for f in body.frames]
+        try:
+            result = await asyncio.to_thread(
+                engine.generate, body.goal, history, images, timestamps
+            )
+        except ModelBusy as e:
+            raise HTTPException(429, str(e)) from e
+        except Exception as e:
+            LOGGER.exception("Stateless planning failed")
+            reason = f"{type(e).__name__}: {e}"[:300]
+            raise HTTPException(503, f"Inference failed ({reason}); inspect server logs") from e
+        return {
+            "status": result.status,
+            "instruction": result.instruction,
+            "raw_output": result.raw_output,
+            "proposal": result.proposal,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "timings": {
+                **result.timings,
+                "server_total_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
+            "received_at_ms": received_at_ms,
+            "responded_at_ms": time.time() * 1000,
+        }
+
+    @app.post("/v1/intent")
+    async def intent(body: IntentRequest):
+        """Labels one utterance from text alone; guidance_node decides what the label does."""
+        try:
+            return await asyncio.to_thread(
+                engine.classify, body.text, body.goal, body.state, body.instruction
+            )
+        except ModelBusy as e:
+            raise HTTPException(429, str(e)) from e
+        except Exception as e:
+            LOGGER.exception("Intent classification failed")
+            reason = f"{type(e).__name__}: {e}"[:300]
+            raise HTTPException(503, f"Inference failed ({reason}); inspect server logs") from e
+
     @app.post("/api/sessions/{session_id}/plan")
     async def plan(session_id: UUID, body: PlanRequest):
         started = time.perf_counter()
@@ -175,22 +269,7 @@ def create_app(settings=None, engine=None, load_model=True):
             raise Conflict(
                 f"Request is {existing['state']}; use a new ID after resolving the state"
             )
-        if engine.state != "ready":
-            raise HTTPException(503, "Model is loading or unavailable; check /api/ready")
-        if engine.status().get("busy"):
-            raise HTTPException(429, "One inference is already running; retry after it finishes")
-        if session["source"] in {"aria", "webcam"}:
-            age = received_at_ms - body.frames[-1].timestamp_ms
-            if not -3000 <= age <= 5000:
-                raise HTTPException(
-                    422, "Live frames must be recent; synchronize the client and server clocks"
-                )
-        try:
-            images = await asyncio.to_thread(
-                lambda: [decode_image(f.image_base64) for f in body.frames]
-            )
-        except ValueError as e:
-            raise HTTPException(422, str(e)) from e
+        images = await checked_images(body, session["source"] in {"aria", "webcam"}, received_at_ms)
         decode_ms = round((time.perf_counter() - started) * 1000, 2)
         session = store.reserve(sid, rid, fingerprint)
         try:
@@ -209,6 +288,7 @@ def create_app(settings=None, engine=None, load_model=True):
                 "status": result.status,
                 "instruction": result.instruction,
                 "raw_output": result.raw_output,
+                "proposal": result.proposal,
                 "model": "Qwen/Qwen3.5-9B",
                 "cached": False,
                 "input_tokens": result.input_tokens,
@@ -240,10 +320,10 @@ def create_app(settings=None, engine=None, load_model=True):
             raise HTTPException(429, str(e)) from e
         except Exception as e:
             LOGGER.exception("Planning failed for request %s", rid)
-            store.fail(sid, rid, session["version"], type(e).__name__)
-            raise HTTPException(
-                503, f"Inference failed ({type(e).__name__}); inspect server logs"
-            ) from e
+            # Keep the message: parse_output rejections (leaked reasoning, echoed goal) differ.
+            reason = f"{type(e).__name__}: {e}"[:300]
+            store.fail(sid, rid, session["version"], reason)
+            raise HTTPException(503, f"Inference failed ({reason}); inspect server logs") from e
 
     @app.get("/api/runs/{request_id}/frames/{index}")
     def frame(request_id: UUID, index: int):
@@ -253,6 +333,7 @@ def create_app(settings=None, engine=None, load_model=True):
         return FileResponse(path, media_type="image/jpeg")
 
     @app.post("/api/transcribe")
+    @app.post("/v1/asr")
     async def transcribe(file: Annotated[UploadFile, File()]):
         data = await file.read(6 * 1024 * 1024 + 1)
         if len(data) > 6 * 1024 * 1024:
@@ -265,6 +346,96 @@ def create_app(settings=None, engine=None, load_model=True):
             raise HTTPException(422, str(e)) from e
         except RuntimeError as e:
             raise HTTPException(503, str(e)) from e
+
+    @app.post("/v1/live/state")
+    async def live_state_push(request: Request):
+        """guidance_node's state, the same JSON it publishes on /guidance/state."""
+        try:
+            state = await request.json()
+        except ValueError as e:
+            raise HTTPException(422, "State must be a JSON object") from e
+        if not isinstance(state, dict):
+            raise HTTPException(422, "State must be a JSON object")
+        await live.push_state(state)
+        return {"version": live.version}
+
+    @app.put("/v1/live/preview")
+    async def live_preview_push(request: Request):
+        jpeg = await request.body()
+        if not jpeg.startswith(b"\xff\xd8"):
+            raise HTTPException(422, "Preview must be a JPEG")
+        await live.push_preview(jpeg)
+        return {"saved": True}
+
+    @app.get("/v1/live/commands")
+    async def live_commands(wait: float = 10.0):
+        return await live.take_commands(min(max(wait, 0.0), 25.0))
+
+    @app.get("/api/live/state")
+    async def live_state(after: int = -1, wait: float = 0.0):
+        return await live.wait_state(after, min(max(wait, 0.0), 25.0))
+
+    @app.get("/api/live/preview.jpg")
+    def live_preview():
+        if live.preview is None or not live.node_online():
+            raise HTTPException(404, "No live preview; is guidance_node running?")
+        return Response(
+            live.preview, media_type="image/jpeg", headers={"Cache-Control": "no-store"}
+        )
+
+    @app.post("/api/live/command", status_code=202)
+    async def live_command(body: LiveCommand):
+        if not live.node_online():
+            # Refused, not queued: a "done" must not fire minutes later when the node returns.
+            raise HTTPException(503, "guidance_node is not connected to this backend")
+        await live.add_command(body.model_dump())
+        return {"queued": True}
+
+    @app.get("/api/system")
+    def system_status():
+        return system.status()
+
+    @app.get("/api/system/{name}/log")
+    def system_log(name: str):
+        """The end of one fixed process's log; the name is checked, so no path can be steered."""
+        if name not in system.services:
+            raise HTTPException(404, "Unknown process")
+        return {"exists": system.has_log(name), "lines": system.log_tail(name, LOG_VIEW_LINES)}
+
+    @app.post("/api/system/{name}/{action}")
+    def system_action(name: str, action: str):
+        """Starts or stops one of the fixed ROS processes; nothing else can be run."""
+        if action not in {"start", "stop"} or name not in system.services:
+            raise HTTPException(404, "Unknown process or action")
+        getattr(system, action)(name)
+        return system.status()
+
+    @app.get("/api/trials")
+    def trials():
+        return list_trials(trial_roots)
+
+    @app.get("/api/trials/{session}/{trial}")
+    def trial_detail(session: str, trial: str):
+        return read_trial(find_trial(trial_roots, session, trial))
+
+    @app.get("/api/trials/{session}/{trial}/video.mp4")
+    async def trial_mp4(session: str, trial: str):
+        path = await asyncio.to_thread(trial_video, find_trial(trial_roots, session, trial))
+        if path is None:
+            raise HTTPException(404, "This trial has no frames")
+        # Open trials are re-encoded as frames arrive; closed ones are cached.
+        return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/trials/{session}/{trial}/captions.vtt")
+    def trial_vtt(session: str, trial: str):
+        path = trial_captions(find_trial(trial_roots, session, trial))
+        if path is None:
+            raise HTTPException(404, "This trial has no frames")
+        return FileResponse(path, media_type="text/vtt", headers={"Cache-Control": "no-cache"})
+
+    @app.put("/api/trials/{session}/{trial}/review")
+    def review(session: str, trial: str, body: Review):
+        return write_review(find_trial(trial_roots, session, trial), body.verdict, body.notes)
 
     @app.get("/api/reports/latest")
     def report():

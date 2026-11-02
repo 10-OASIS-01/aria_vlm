@@ -21,8 +21,7 @@ class Frame(StrictModel):
     image_base64: str = Field(min_length=32, max_length=2 * 1024 * 1024)
 
 
-class PlanRequest(StrictModel):
-    request_id: UUID
+class Window(StrictModel):
     frames: list[Frame] = Field(min_length=20, max_length=20)
 
     @model_validator(mode="after")
@@ -38,8 +37,48 @@ class PlanRequest(StrictModel):
         return self
 
 
+class PlanRequest(Window):
+    request_id: UUID
+
+
+class Turn(StrictModel):
+    role: Literal["user", "assistant"]
+    text: str = Field(max_length=1500)
+
+
+class IntentRequest(StrictModel):
+    """One utterance to label; the caller (guidance_node) owns the task state."""
+
+    text: str = Field(min_length=1, max_length=1500)
+    goal: str = Field(default="", max_length=1500)
+    state: str = Field(default="", max_length=40)
+    instruction: str = Field(default="", max_length=1500)
+
+
+class PlanV1(Window):
+    """Stateless plan: the caller owns the goal and dialogue history."""
+
+    goal: str = Field(min_length=3, max_length=1500)
+    history: list[Turn] = Field(default=[], max_length=24)
+    # Live frames are checked for age; recorded ones are not.
+    live: bool = True
+
+
+class LiveCommand(StrictModel):
+    """An operator action from the web console, relayed to guidance_node."""
+
+    kind: Literal["goal", "reply", "note", "talk"]
+    # The goal, reply or note text; "on" or "off" for talk.
+    text: str = Field(default="", max_length=1500)
+
+
+class Review(StrictModel):
+    verdict: Literal["success", "fail"] | None = None
+    notes: str = Field(default="", max_length=10_000)
+
+
 class Feedback(StrictModel):
-    event: Literal["done", "next", "feedback", "cancel"]
+    event: Literal["done", "next", "feedback", "cancel", "confirm"]
     text: str = Field(default="", max_length=1500)
 
 

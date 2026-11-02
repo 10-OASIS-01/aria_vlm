@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 408" role="img" aria-labelledby="title desc" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">How one task moves through the console's band</title>
+  <desc id="desc">Setting a goal moves the band from No goal yet to Observing, then Thinking, then Act on the instruction. Done with step or Need help returns to Observing. When the model proposes completion the band asks Finished? Yes, finish goes to Complete. Not yet returns to Observing. Finish task and Cancel task work at any point.</desc>
+  <defs>
+    <marker id="auto" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#5f6b66"/></marker>
+    <marker id="person" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#203b37"/></marker>
+  </defs>
+  <style>
+    .state { fill: #fff; stroke: #203b37; stroke-width: 1.5; }
+    .wait { fill: #f5f7f6; stroke: #5f6b66; stroke-width: 1.5; }
+    .act { fill: #e0f1b9; stroke: #315c4b; stroke-width: 1.5; }
+    .band { font-size: 15px; font-weight: 600; fill: #203b37; text-anchor: middle; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; fill: #4c5a55; text-anchor: middle; }
+    .auto { stroke: #5f6b66; stroke-width: 2; stroke-dasharray: 6 4; fill: none; marker-end: url(#auto); }
+    .person { stroke: #203b37; stroke-width: 2.5; fill: none; marker-end: url(#person); }
+    .join { stroke: #203b37; stroke-width: 2.5; fill: none; }
+    .label { font-size: 13px; fill: #354742; }
+    .strong { font-size: 13px; font-weight: 600; fill: #203b37; }
+    .middle { text-anchor: middle; }
+  </style>
+  <rect width="960" height="408" rx="16" fill="#fff"/>
+
+  <!-- Lines first, so the states sit on top -->
+  <path class="auto" d="M495 134V262"/>
+  <path class="person" d="M778 142V180C778 190 770 194 760 194H339C331 194 325 190 325 180V134"/>
+  <path class="join" d="M403 294H339C331 294 325 290 325 282V194"/>
+
+  <!-- Main row -->
+  <rect class="state" x="24" y="70" width="126" height="64" rx="8"/>
+  <text class="band" x="87" y="97">No goal yet</text>
+  <text class="code" x="87" y="118">idle</text>
+
+  <rect class="wait" x="262" y="70" width="126" height="64" rx="8"/>
+  <text class="band" x="325" y="97">Observing</text>
+  <text class="code" x="325" y="118">ready</text>
+  <text class="label middle" x="325" y="54">Needs 10 s of camera</text>
+
+  <rect class="wait" x="432" y="70" width="126" height="64" rx="8"/>
+  <text class="band" x="495" y="97">Thinking</text>
+  <text class="code" x="495" y="118">planning</text>
+
+  <rect class="act" x="620" y="62" width="316" height="80" rx="8"/>
+  <text class="band" x="778" y="94">Act on the instruction</text>
+  <text class="code" x="778" y="116">awaiting_feedback</text>
+
+  <path class="person" d="M150 102H262"/>
+  <text class="strong middle" x="206" y="72">Set a goal</text>
+  <text class="label middle" x="206" y="90">typed or spoken</text>
+  <path class="auto" d="M388 102H432"/>
+  <path class="auto" d="M558 102H620"/>
+
+  <text class="strong middle" x="650" y="184">Done with step, or Need help</text>
+
+  <!-- Finish row -->
+  <rect class="act" x="403" y="262" width="184" height="64" rx="8"/>
+  <text class="band" x="495" y="289">Finished?</text>
+  <text class="code" x="495" y="310">awaiting_confirmation</text>
+  <text class="label" x="507" y="232">The model proposes completion</text>
+  <text class="strong middle" x="364" y="284">Not yet</text>
+
+  <rect class="state" x="800" y="262" width="136" height="64" rx="8"/>
+  <text class="band" x="868" y="289">Complete</text>
+  <text class="code" x="868" y="310">completed</text>
+  <path class="person" d="M587 294H800"/>
+  <text class="strong middle" x="693" y="284">Yes, finish</text>
+
+  <!-- Any time -->
+  <text class="label" x="24" y="362">At any point:</text>
+  <text class="strong" x="110" y="362">Finish task</text>
+  <text class="label" x="186" y="362">closes the trial as completed.</text>
+  <text class="strong" x="384" y="362">Cancel task</text>
+  <text class="label" x="464" y="362">closes it as cancelled.</text>
+  <text class="strong" x="620" y="362">New goal</text>
+  <text class="label" x="684" y="362">replaces the task.</text>
+
+  <!-- Legend -->
+  <path class="person" d="M24 388H60"/><text class="label" x="68" y="393">The person acts</text>
+  <path class="auto" d="M190 388H226"/><text class="label" x="234" y="393">Happens by itself</text>
+  <rect class="act" x="366" y="380" width="24" height="16" rx="4"/><text class="label" x="398" y="393">Waiting for the person</text>
+</svg>

@@ -34,10 +34,27 @@ client.close()
 | GET | `/api/health` | Process liveness, including model readiness boolean |
 | GET | `/api/ready` | Model state; 503 until ready |
 | GET | `/api/status` | Model, ASR, latest evaluation and recent sessions |
+| POST | `/v1/plan` | `{goal, history, frames, live?}` → next instruction. Stateless: the caller owns the task |
+| POST | `/v1/intent` | `{text, goal?, state?, instruction?}` → one label for an utterance, from text alone. Stateless |
+| POST | `/v1/asr` | Same as `/api/transcribe` |
+| POST | `/v1/live/state` | guidance_node's state JSON, on change and every 2 s |
+| PUT | `/v1/live/preview` | guidance_node's newest preview JPEG |
+| GET | `/v1/live/commands?wait=` | guidance_node long-polls for console commands (up to 25 s) |
+| GET | `/api/live/state?after=&wait=` | The console long-polls the state; adds `version` and `node_online`. Also carries `mic` and `feed`, the last 20 utterances, including ignored speech |
+| GET | `/api/live/preview.jpg` | Newest preview; 404 while the node is offline |
+| POST | `/api/live/command` | `{kind: goal\|reply\|note\|talk, text}`; 503 while the node is offline |
+| GET | `/api/system` | guidance_node, glasses and test camera: state, exit code, start time, log tail when failed |
+| GET | `/api/system/{name}/log` | `{exists, lines}`: the last 200 non-blank lines of that process's log, without colour codes; `exists` is false if the console never started it. Unknown names are 404 |
+| POST | `/api/system/{name}/{start\|stop}` | Starts or stops one of those three; nothing else can be run |
+| GET | `/api/trials` | Trial summaries from `ARIA_SESSIONS_DIR` and `.runtime/guidance`, newest first |
+| GET | `/api/trials/{session}/{trial}` | `trial.json`, events, review, frame count and the first frame's time |
+| GET | `/api/trials/{session}/{trial}/video.mp4` | Frames as H.264 with the microphone as AAC when recorded, timed by capture stamps; cached once the trial closes |
+| GET | `/api/trials/{session}/{trial}/captions.vtt` | WebVTT of what was said (`Human:`, `System:`) and notes, timed like the video |
+| PUT | `/api/trials/{session}/{trial}/review` | `{verdict: success\|fail\|null, notes}` (notes ≤ 10,000 characters) |
 | POST | `/api/sessions` | `{goal, source, task_id?}` → new session |
 | GET | `/api/sessions/{id}` | Goal, state, history, plans and client events |
 | POST | `/api/sessions/{id}/plan` | `{request_id, frames}` → next instruction |
-| POST | `/api/sessions/{id}/feedback` | `{event, text?}`; event is `done`, `next`, `feedback` or `cancel` |
+| POST | `/api/sessions/{id}/feedback` | `{event, text?}`; event is `done`, `next`, `feedback`, `cancel` or `confirm` |
 | POST | `/api/sessions/{id}/events` | Bridge timestamps, TTS publish/suppression and client timing |
 | POST | `/api/transcribe` | Multipart `file`, 16-bit PCM WAV, 0.2–30 seconds, ≤6 MiB |
 | GET | `/api/runs/{request_id}/frames/{index}` | Saved frame index 0–19 |
@@ -52,14 +69,25 @@ Write requests require `Authorization: Bearer TOKEN` only when `ARIA_API_TOKEN` 
 - Each frame contains `timestamp_ms` and base64 JPEG/PNG data. JPEG/PNG data URLs are also accepted.
 - No HTTP image URLs or server-side file paths are accepted.
 - Each encoded image is at most 2 MiB; decoded bytes are limited to 1.5 MiB and 16 megapixels. The complete HTTP request is limited to 24 MiB.
-- For `source="aria"` or `"webcam"`, timestamps are Unix epoch milliseconds; the newest capture must be no more than five seconds old or three seconds into the future when received.
+- For `source="aria"` or `"webcam"`, timestamps are Unix epoch milliseconds; the newest capture must be no more than `ARIA_MAX_FRAME_AGE_MS` old (default 5000) or three seconds into the future when received. The 422 response states the measured age. `ARIA_MAX_FRAME_AGE_MS=0` disables the check.
 - For `source="replay"`, timestamps may be relative to the recording. Replay mode is identified in the session and must not be counted as live hardware evidence.
 
-The ROS bridge samples a bounded buffer. It requires a sufficiently complete window and rejects stale, duplicated or badly gapped captures. Images are JPEG encoded at a maximum edge of 640 pixels before transmission; Qwen's processor applies the configured pixel budget.
+The ROS bridge samples a bounded buffer. It requires a sufficiently complete window and rejects stale, duplicated or badly gapped captures. Images are JPEG encoded at a maximum edge of 640 pixels before transmission; Qwen's processor applies the configured pixel budget. With `ARIA_INPUT_MODE=video` (the default), the backend passes the 20 frames to the model as one 2 fps video. The `<t seconds>` timestamps the processor inserts come from that nominal rate, not from the client's capture times; the gap limits above keep the actual spacing close to it.
+
+## Stateless planning
+
+`POST /v1/plan` is what `guidance_node` uses. The body carries the goal, the dialogue `history` (at most 24 turns of `{role: user|assistant, text}`) and the 20 frames. `live` (default true) applies the frame age check; set it false for recorded frames. The response has `status`, `instruction`, `raw_output`, token counts, `timings`, `received_at_ms` and `responded_at_ms`. Nothing is stored. Busy is 429, a loading model 503, bad or stale frames 422.
+
+`POST /v1/intent` sorts one utterance into `done`, `help`, `correction`, `repeat`, `cancel`, `finish` or `ignore`. The body carries the words (1–1500 characters) and optionally the `goal`, the task `state` and the last `instruction`. The response has `label`, `raw_output`, token counts and `timings`; `label` is null when the model's answer is not a label. It uses the loaded Qwen model with no frames and at most 6 output tokens. Unlike `/v1/plan`, it waits up to 15 s for a running plan before answering 429. A loading model or failed call is 503. The label decides nothing by itself: `guidance_node` maps it to an action and never closes a trial on it.
 
 ## Session lifecycle
 
-`ready → planning → awaiting_feedback → ready`, or `planning → completed`.
+The `/api/sessions` routes keep state on the server and serve the workbench.
+
+
+`ready → planning → awaiting_feedback → ready`, or `planning → awaiting_confirmation → completed`.
+
+The model only proposes completion. A `DONE` answer moves the session to `awaiting_confirmation`, and the `confirm` feedback event closes it as `completed`. Any other feedback event in that state (for example `next`, or `feedback` saying something is still missing) returns the session to `ready` for another plan, with the exchange kept in the dialogue history. `confirm` in any other state is rejected with 409.
 
 `cancel` moves the session to `cancelled` and invalidates a generation in flight. A new goal creates a new session. Restarting the service marks interrupted plans as failed and returns affected sessions to `ready`.
 
@@ -70,7 +98,8 @@ Each plan uses a UUID `request_id`. Retrying the same ID with identical input re
 Output includes:
 
 - `instruction`: text intended for the person.
-- `status`: `instruction`, `clarification` or `completed`. Only the exact model control response `DONE` marks completion; arbitrary sentences mentioning completion do not.
+- `status`: `instruction`, `clarification` or `done_proposed`. Only the model's `DONE` mode proposes completion; sentences mentioning completion do not. A `done_proposed` result speaks the model's SAY line (or "The task looks complete." without one) and needs a `confirm` feedback event before the session is `completed`.
+- `proposal`: `{mode, check, evidence, unknown, expect, plan}`, never spoken. `mode` is `ACT`, `INSPECT`, `ASK`, `REPLAN` or `DONE`. `check` says whether the last answer's `expect` holds now (`yes`, `no`, `unknown` or `none`); `evidence` is what the model saw that decided the step; `unknown` is a fact the step depends on that the scene does not show, or `none`; `expect` is what should be true after the step; `plan` is the steps left after this one, separated by `;`. Fields the model did not write are empty, as in the old one-line format.
 - `raw_output`: the non-thinking model answer, retained for evaluation.
 - `input_tokens`, `output_tokens`, observation stamps and timing fields.
 - `preview`: a relative URL for the newest saved frame, or null when frame saving is disabled.
@@ -89,7 +118,7 @@ Output includes:
 | `received_at_ms`, `responded_at_ms` | Backend wall clock stamps |
 | `tts_published` event | ROS host timestamp when text is published to the TTS topic |
 
-The ten-second observation window, model load time, STT latency, and speaker playback duration are separate quantities. TTS publish time is **not** the first audible sample or playback completion. Aria provides no playback acknowledgement through the current four-topic interface. Full spoken-goal-to-audible-instruction latency requires a hardware recording and synchronized clocks. Do not label a replay's HTTP timing as wearable end-to-end latency.
+The ten-second observation window, model load time, STT latency, and speaker playback duration are separate quantities. TTS publish time is **not** the first audible sample or playback completion. Aria provides no playback acknowledgement through the current four-topic interface. Full spoken-goal-to-audible-instruction latency requires a hardware recording and synchronized clocks; the [hardware checklist](hardware-checklist.md#evidence-to-retain) gives the procedure and `scripts/trial_latency.py` reports the part up to the TTS publish. Do not label a replay's HTTP timing as wearable end-to-end latency.
 
 ## Storage
 

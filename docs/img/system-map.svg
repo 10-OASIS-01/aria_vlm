@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 746" role="img" aria-labelledby="title desc" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">Where each part of Aria Visual Guidance runs and how the parts talk</title>
+  <desc id="desc">The glasses stream to aria_node on the ROS host. aria_node publishes video and audio topics to guidance_node and speaks text from /aria/tts. guidance_node calls the backend on the GPU workstation over HTTP. The operator's browser opens the console served by the backend.</desc>
+  <defs>
+    <marker id="ros" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#0f7f5f"/></marker>
+    <marker id="http" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#c2571a"/></marker>
+    <marker id="link" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#5f6b66"/></marker>
+  </defs>
+  <style>
+    .zone { fill: #f5f7f6; stroke: #cfd8d3; }
+    .box { fill: #fff; stroke: #203b37; stroke-width: 1.5; }
+    .part { fill: #e9eeeb; }
+    .zone-name { font-size: 15px; font-weight: 600; fill: #203b37; }
+    .zone-note { font-size: 13px; fill: #5f6b66; }
+    .name { font-size: 16px; font-weight: 600; fill: #203b37; }
+    .note { font-size: 13px; fill: #4c5a55; }
+    .part-text { font-size: 13px; font-weight: 600; fill: #203b37; }
+    .label { font-size: 13px; fill: #354742; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; fill: #203b37; }
+    .ros { stroke: #0f7f5f; stroke-width: 2; fill: none; marker-end: url(#ros); }
+    .http { stroke: #c2571a; stroke-width: 2; stroke-dasharray: 7 4; fill: none; marker-end: url(#http); }
+    .link { stroke: #5f6b66; stroke-width: 2; stroke-dasharray: 2 4; stroke-linecap: round; fill: none; marker-end: url(#link); }
+  </style>
+  <rect width="960" height="746" rx="16" fill="#fff"/>
+
+  <!-- Wearer -->
+  <rect class="zone" x="24" y="24" width="340" height="108" rx="12"/>
+  <text class="zone-name" x="44" y="50">On the wearer</text>
+  <rect class="box" x="44" y="62" width="300" height="54" rx="8"/>
+  <text class="name" x="62" y="85">Aria Gen2 glasses</text>
+  <text class="note" x="62" y="104">Camera, microphones, speaker</text>
+
+  <!-- ROS host -->
+  <rect class="zone" x="24" y="196" width="912" height="240" rx="12"/>
+  <text class="zone-name" x="380" y="222">ROS host</text>
+  <text class="zone-note" x="456" y="222">Ubuntu 22.04, ROS 2 Humble</text>
+  <rect class="box" x="44" y="238" width="300" height="86" rx="8"/>
+  <text class="name" x="62" y="264">aria_node</text>
+  <text class="note" x="62" y="284">Package aria_driver, from aria2_ros2</text>
+  <text class="note" x="62" y="303">Owns the glasses</text>
+  <rect class="box" x="664" y="238" width="252" height="178" rx="8"/>
+  <text class="name" x="682" y="264">guidance_node</text>
+  <text class="note" x="682" y="284">Package aria_guidance_ros</text>
+  <text class="note" x="682" y="303">Owns the goal, the dialogue</text>
+  <text class="note" x="682" y="321">and the step state</text>
+  <text class="note" x="682" y="347">Writes each goal as a trial</text>
+  <rect class="box" x="44" y="344" width="300" height="72" rx="8" stroke-dasharray="5 4"/>
+  <text class="name" x="62" y="372">Test camera</text>
+  <text class="note" x="62" y="393">tools/fake_camera.py, instead of the glasses</text>
+  <rect class="part" x="372" y="372" width="268" height="44" rx="8"/>
+  <text class="part-text" x="386" y="390">data/sessions/&lt;session&gt;/</text>
+  <text class="note" x="386" y="407">VRS, clock.csv, trials/</text>
+
+  <!-- ROS topics -->
+  <path class="ros" d="M344 262H664"/>
+  <text class="code" x="504" y="254" text-anchor="middle">/aria/rgb/image_raw, /aria/audio</text>
+  <path class="ros" d="M664 300H344"/>
+  <text class="code" x="504" y="292" text-anchor="middle">/aria/tts</text>
+  <path class="ros" d="M344 352H664"/>
+  <text class="code" x="504" y="344" text-anchor="middle">/aria/rgb/image_raw</text>
+
+  <!-- Glasses link -->
+  <path class="link" d="M120 116V238"/>
+  <text class="label" x="108" y="162" text-anchor="end">Sensor</text>
+  <text class="label" x="108" y="179" text-anchor="end">stream</text>
+  <path class="link" d="M268 238V116"/>
+  <text class="label" x="280" y="162">Onboard</text>
+  <text class="label" x="280" y="179">speech</text>
+
+  <!-- GPU workstation -->
+  <rect class="zone" x="374" y="506" width="562" height="216" rx="12"/>
+  <text class="zone-name" x="394" y="532">GPU workstation</text>
+  <text class="zone-note" x="522" y="532">Python 3.10+, NVIDIA GPU</text>
+  <rect class="box" x="394" y="546" width="522" height="160" rx="8"/>
+  <text class="name" x="412" y="572">Backend, port 8785</text>
+  <text class="note" x="412" y="592">scripts/service.sh. Stateless: a restart loses no task.</text>
+  <rect class="part" x="412" y="608" width="156" height="80" rx="8"/>
+  <text class="part-text" x="426" y="634">Qwen3.5-9B</text>
+  <text class="note" x="426" y="654">Next-step</text>
+  <text class="note" x="426" y="671">instruction</text>
+  <rect class="part" x="578" y="608" width="156" height="80" rx="8"/>
+  <text class="part-text" x="592" y="634">faster-whisper</text>
+  <text class="note" x="592" y="654">Speech to text,</text>
+  <text class="note" x="592" y="671">on the CPU</text>
+  <rect class="part" x="744" y="608" width="156" height="80" rx="8"/>
+  <text class="part-text" x="758" y="634">Web console</text>
+  <text class="note" x="758" y="654">Live, Trials,</text>
+  <text class="note" x="758" y="671">Try a task, Setup</text>
+
+  <!-- guidance_node and backend -->
+  <path class="http" d="M716 416V546"/>
+  <path class="http" d="M864 546V416"/>
+  <text class="code" x="704" y="462" text-anchor="end">POST /v1/plan</text>
+  <text class="label" x="704" y="479" text-anchor="end">20 frames, goal, dialogue</text>
+  <text class="code" x="704" y="497" text-anchor="end">POST /v1/asr, /v1/live/*</text>
+  <text class="label" x="852" y="462" text-anchor="end">Instruction,</text>
+  <text class="label" x="852" y="479" text-anchor="end">transcript,</text>
+  <text class="label" x="852" y="497" text-anchor="end">commands</text>
+
+  <!-- Operator -->
+  <rect class="zone" x="24" y="506" width="286" height="136" rx="12"/>
+  <text class="zone-name" x="44" y="532">Operator</text>
+  <rect class="box" x="44" y="546" width="246" height="76" rx="8"/>
+  <text class="name" x="62" y="573">Browser</text>
+  <text class="note" x="62" y="594">Controls the task, reviews trials</text>
+  <path class="http" d="M290 584H394"/>
+  <text class="label" x="342" y="574" text-anchor="middle">HTTP</text>
+
+  <!-- Legend -->
+  <g transform="translate(24 656)">
+    <path class="ros" d="M0 8H40"/><text class="label" x="50" y="13">ROS topic</text>
+    <path class="http" d="M0 34H40"/><text class="label" x="50" y="39">HTTP</text>
+    <path class="link" d="M0 60H40"/><text class="label" x="50" y="65">Glasses link</text>
+  </g>
+</svg>

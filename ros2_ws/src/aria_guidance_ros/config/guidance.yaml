@@ -1,0 +1,20 @@
+guidance_node:
+  ros__parameters:
+    backend_url: http://127.0.0.1:8785
+    image_topic: /aria/rgb/image_raw
+    audio_topic: /aria/audio
+    tts_topic: /aria/tts
+    max_result_age_seconds: 60.0
+    request_timeout_seconds: 120.0
+    image_interval_ms: 200.0
+    max_audio_seconds: 20.0
+    audio_gain: 16.0
+    # Always listen for "Aria"; speech without it is discarded. Threshold is RMS after gain.
+    open_mic: true
+    open_mic_threshold: 0.006
+    # The pause that ends an utterance; shorter ones split a goal in two.
+    open_mic_silence_seconds: 1.2
+    # True keeps the mic off while the glasses speak, if it starts picking their voice up.
+    open_mic_deaf_while_speaking: false
+    # aria_node's record.output_dir; trials go into its newest live session.
+    session_root: data/sessions

@@ -16,7 +16,15 @@ class GuidanceClient:
 
     def request(self, method, path, **kwargs):
         response = self.http.request(method, path, **kwargs)
-        response.raise_for_status()
+        if response.is_error:
+            # Keep the server's reason (e.g. stale frames) instead of a bare "422" status line.
+            try:
+                detail = response.json().get("detail", response.text)
+            except ValueError:
+                detail = response.text
+            raise httpx.HTTPStatusError(
+                f"{response.status_code}: {detail}", request=response.request, response=response
+            )
         return response.json()
 
     def create_session(self, goal, source="aria", task_id=""):
@@ -34,6 +42,32 @@ class GuidanceClient:
             },
         )
 
+    def plan_v1(self, goal, history, frames, live=True):
+        return self.request(
+            "POST",
+            "v1/plan",
+            json={"goal": goal, "history": history, "frames": frames, "live": live},
+        )
+
+    def intent(self, text, goal="", state="", instruction=""):
+        return self.request(
+            "POST",
+            "v1/intent",
+            json={"text": text, "goal": goal, "state": state, "instruction": instruction},
+        )
+
+    def live_state(self, state):
+        return self.request("POST", "v1/live/state", json=state)
+
+    def live_preview(self, jpeg):
+        return self.request(
+            "PUT", "v1/live/preview", content=jpeg, headers={"Content-Type": "image/jpeg"}
+        )
+
+    def live_commands(self, wait=10.0):
+        # The server holds the request up to `wait` s; allow for that on top of the timeout.
+        return self.request("GET", "v1/live/commands", params={"wait": wait}, timeout=wait + 10)
+
     def feedback(self, session_id, event="done", text=""):
         return self.request(
             "POST", f"api/sessions/{session_id}/feedback", json={"event": event, "text": text}
@@ -43,9 +77,7 @@ class GuidanceClient:
         return self.request("POST", f"api/sessions/{session_id}/events", json=payload)
 
     def transcribe(self, wav):
-        return self.request(
-            "POST", "api/transcribe", files={"file": ("speech.wav", wav, "audio/wav")}
-        )
+        return self.request("POST", "v1/asr", files={"file": ("speech.wav", wav, "audio/wav")})
 
     def close(self):
         self.http.close()

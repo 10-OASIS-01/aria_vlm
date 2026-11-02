@@ -105,7 +105,9 @@ class FrameBuffer:
             raise WindowNotReady("Collecting a 10-second camera window")
         end = frames[-1].timestamp_ms
         if now_ms is not None and now_ms - end > 1500:
-            raise WindowNotReady("Camera stream is stale")
+            raise WindowNotReady(
+                f"Camera stream is stale: newest frame is {(now_ms - end) / 1000:.1f} s old"
+            )
         # Nearest frame to each 2 Hz target. Never repeat a capture to pad the window.
         targets = np.linspace(end - 9500, end, 20)
         times = np.array([f.timestamp_ms for f in frames])

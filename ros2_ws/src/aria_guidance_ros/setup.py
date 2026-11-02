@@ -2,7 +2,7 @@ from glob import glob
 
 from setuptools import find_packages, setup
 
-name = "aria_planner_bridge"
+name = "aria_guidance_ros"
 setup(
     name=name,
     version="0.1.0",
@@ -15,5 +15,5 @@ setup(
     ],
     install_requires=["setuptools"],
     zip_safe=True,
-    entry_points={"console_scripts": ["planner_bridge = aria_planner_bridge.node:main"]},
+    entry_points={"console_scripts": ["guidance_node = aria_guidance_ros.guidance_node:main"]},
 )

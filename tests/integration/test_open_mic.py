@@ -1,0 +1,378 @@
+"""The open mic through the real node: transcripts are scripted, Whisper is not run."""
+
+import time
+
+import numpy as np
+import pytest
+from aria_msgs.msg import Audio
+from conftest import trials, wait_for
+from test_guidance import heard, kinds
+
+from aria_guidance.intent import SAY_CANCEL, SAY_START
+from aria_guidance.trial import trial_captions
+
+
+@pytest.fixture
+def mic(node):
+    """Turns the open mic on; say() hands the node what Whisper would have returned."""
+    node.config["open_mic"] = True
+
+    def say(text):
+        node.audio_busy = True  # As hear_next does before the transcription.
+        node.messages.put(("heard", time.monotonic(), {"text": text}))
+        wait_for(lambda: not node.audio_busy)
+        time.sleep(0.3)  # One more tick, for what the transcript started.
+
+    return say
+
+
+def started(probe, node, mic, goal="Aria, trial start, pick up the pen"):
+    """Opens a trial by voice and waits for its first instruction."""
+    mic(goal)
+    return heard(probe, node, 1)
+
+
+def test_chatter_does_nothing_and_leaves_no_trace(probe, node, camera, backend, mic, tmp_path):
+    mic("Pick up the marker please")
+    mic("Stop")
+    assert node.task.state == "idle" and probe.tts == [] and trials(tmp_path) == []
+    assert node.last_heard is None
+    started(probe, node, mic)
+    calls = len(backend.engine.calls)
+    mic("In that area there is a mug")
+    mic("Stop")
+    assert node.task.active and backend.engine.intent_calls == []
+    assert len(backend.engine.calls) == calls
+    [(_, events, _)] = trials(tmp_path)
+    assert not [e for e in events if e["kind"] == "transcript" and not e.get("voice")]
+
+
+def test_start_with_goal_opens_a_trial_without_the_model(
+    probe, node, camera, backend, mic, tmp_path
+):
+    assert started(probe, node, mic) == "Pick up the pen."
+    assert backend.engine.intent_calls == []
+    [(trial, _, _)] = trials(tmp_path)
+    assert trial["goal"] == "pick up the pen"
+
+
+def test_start_alone_asks_and_the_next_words_are_the_goal(probe, node, camera, mic, tmp_path):
+    mic("Aria, trial start")
+    assert heard(probe, node, 1) == "What is the goal?"
+    assert trials(tmp_path) == []
+    node.speaking_until = 0.0
+    mic("Stack the cups")  # No "Aria": the reply window is open.
+    wait_for(lambda: node.task.goal == "Stack the cups")
+    assert trials(tmp_path)[0][0]["goal"] == "Stack the cups"
+
+
+def test_the_goal_window_closes(probe, node, camera, mic):
+    mic("Aria, trial start")
+    heard(probe, node, 1)
+    node.window = ("goal", time.monotonic() - 0.1)
+    mic("Stack the cups")
+    assert node.task.state == "idle"
+
+
+def test_following_the_idle_hint_works(probe, node, camera, mic):
+    mic("Aria, what's next")
+    assert heard(probe, node, 1) == SAY_START
+    mic("Aria, trial start")  # The hint's own words, right after it.
+    assert heard(probe, node, 2) == "What is the goal?"
+
+
+def test_new_start_replaces_the_running_trial(probe, node, camera, mic, tmp_path):
+    started(probe, node, mic)
+    mic("Aria, trial start, stack the cups")
+    heard(probe, node, 2)
+    [(first, _, _), (second, _, _)] = trials(tmp_path)
+    assert first["outcome"] == "replaced" and second["goal"] == "stack the cups"
+
+
+@pytest.mark.parametrize(
+    "said, outcome", [("Aria, stop.", "cancelled"), ("Aria, trial end", "completed")]
+)
+def test_exact_words_close_at_once(probe, node, camera, backend, mic, tmp_path, said, outcome):
+    started(probe, node, mic)
+    mic(said)
+    assert trials(tmp_path)[0][0]["outcome"] == outcome
+    assert backend.engine.intent_calls == []
+
+
+def test_labels_become_feedback_with_the_raw_words(probe, node, camera, backend, mic, tmp_path):
+    started(probe, node, mic)
+    backend.engine.intent = "help"
+    mic("Aria, I can't find it")
+    assert heard(probe, node, 2) == "Okay."
+    assert heard(probe, node, 3) == "Pick up the pen."
+    assert backend.engine.calls[-1]["history"][-1]["text"] == "I can't find it"
+    assert backend.engine.intent_calls[0]["text"] == "I can't find it"
+    assert backend.engine.intent_calls[0]["goal"] == "pick up the pen"
+    [(_, events, _)] = trials(tmp_path)
+    [transcript] = [e for e in events if e["kind"] == "transcript" and not e.get("voice")]
+    assert transcript["text"] == "Aria, I can't find it" and transcript["intent"] == "help"
+    [reply] = [e for e in events if e["kind"] == "reply"]
+    assert reply["voice"] is True
+
+
+def test_a_closing_label_only_hints(probe, node, camera, backend, mic, tmp_path):
+    started(probe, node, mic)
+    backend.engine.intent = "cancel"
+    mic("Aria, forget it")
+    assert heard(probe, node, 2) == SAY_CANCEL
+    assert node.task.active and trials(tmp_path)[0][0]["outcome"] is None
+
+
+def test_ignore_is_silent_and_a_failed_call_apologizes(probe, node, camera, backend, mic):
+    started(probe, node, mic)
+    backend.engine.intent = "ignore"
+    mic("Aria, hold on")
+    assert len(probe.tts) == 1
+    backend.engine.intent = None
+    mic("Aria, hm")
+    assert heard(probe, node, 2) == "Sorry, I didn't catch that."
+    backend.engine.intent = RuntimeError("boom")
+    mic("Aria, hm")
+    assert heard(probe, node, 3) == "Sorry, I didn't catch that."
+    assert node.task.active
+
+
+def test_note_goes_to_the_trial_without_a_plan(probe, node, camera, backend, mic, tmp_path):
+    started(probe, node, mic)
+    calls = len(backend.engine.calls)
+    mic("Aria, note: the cup slipped")
+    assert [e["text"] for e in trials(tmp_path)[0][1] if e["kind"] == "note"] == ["the cup slipped"]
+    time.sleep(0.5)
+    assert len(backend.engine.calls) == calls
+
+
+def test_action_during_planning_drops_the_instruction(probe, node, camera, backend, mic, tmp_path):
+    backend.engine.delay = 0.5
+    mic("Aria, trial start, pick up the pen")
+    wait_for(lambda: backend.engine.calls)
+    backend.engine.intent = "correction"
+    node.audio_busy = True  # The utterance is being transcribed when the plan comes back.
+    wait_for(lambda: node.held_plan)
+    assert probe.tts == []
+    backend.engine.reply = "Pick up the blue pen."
+    node.messages.put(("heard", time.monotonic(), {"text": "Aria, actually the blue one"}))
+    assert heard(probe, node, 1) == "Okay."
+    assert heard(probe, node, 2) == "Pick up the blue pen."
+    assert backend.engine.calls[-1]["history"] == [
+        {"role": "user", "text": "actually the blue one"}
+    ]
+    [(_, events, _)] = trials(tmp_path)
+    assert kinds(events).count("plan_result") == 1
+
+
+def test_chatter_during_planning_lets_the_instruction_through(probe, node, camera, backend, mic):
+    backend.engine.delay = 0.5
+    mic("Aria, trial start, pick up the pen")
+    wait_for(lambda: backend.engine.calls)
+    node.audio_busy = True
+    wait_for(lambda: node.held_plan)
+    node.messages.put(("heard", time.monotonic(), {"text": "where did I put that"}))
+    assert heard(probe, node, 1) == "Pick up the pen."
+    assert node.held_plan is None and len(backend.engine.calls) == 1
+
+
+def test_stop_during_planning_drops_the_instruction(probe, node, camera, backend, mic, tmp_path):
+    backend.engine.delay = 0.5
+    mic("Aria, trial start, pick up the pen")
+    wait_for(lambda: backend.engine.calls)
+    node.audio_busy = True
+    wait_for(lambda: node.held_plan)
+    node.messages.put(("heard", time.monotonic(), {"text": "Aria, stop"}))
+    wait_for(lambda: trials(tmp_path)[0][0]["outcome"] == "cancelled")
+    time.sleep(0.4)
+    assert probe.tts == [] and node.held_plan is None
+
+
+def test_talk_is_refused_while_a_plan_is_held(probe, node, camera, backend, mic):
+    backend.engine.delay = 0.3
+    mic("Aria, trial start, pick up the pen")
+    wait_for(lambda: backend.engine.calls)
+    node.endpointer.speaking = True  # Someone is talking, so the plan stays held.
+    wait_for(lambda: node.held_plan)
+    accepted, _ = node.talk(True)
+    assert not accepted and not node.audio_active
+
+
+def test_speech_in_progress_holds_the_plan_then_gives_up(probe, node, camera, backend, mic):
+    backend.engine.delay = 0.3
+    mic("Aria, trial start, pick up the pen")
+    wait_for(lambda: backend.engine.calls)
+    node.endpointer.speaking = True  # Mid-sentence, so nothing has reached the queue yet.
+    wait_for(lambda: node.held_plan)
+    assert probe.tts == []
+    node.held_since -= 8.0  # Ongoing chatter must not starve the instruction.
+    assert heard(probe, node, 1) == "Pick up the pen."
+
+
+def test_hold_to_talk_needs_no_wake_word(probe, node, camera, backend, mic, tmp_path):
+    started(probe, node, mic)
+    node.messages.put(("transcript", node.task.epoch, {"text": "I can't find it"}))
+    heard(probe, node, 2)
+    assert backend.engine.intent_calls == []  # Exact words and feedback, no classifier.
+    assert backend.engine.calls[-1]["history"][-1]["text"] == "I can't find it"
+
+
+def test_console_feed_shows_every_utterance_but_the_trial_keeps_only_addressed(
+    probe, node, camera, backend, mic, tmp_path
+):
+    import httpx
+
+    started(probe, node, mic)
+    mic("where did I leave my coffee")
+    mic("")
+    backend.engine.intent = "cancel"
+    mic("Aria, forget it")
+    node.messages.put(("heard_error", time.monotonic(), "503"))
+    node.audio_busy = True
+    wait_for(lambda: len(node.heard_feed) == 5)
+    outcomes = [(e["text"], e["outcome"], e["label"]) for e in node.heard_feed]
+    assert outcomes == [
+        ("Aria, trial start, pick up the pen", "start", None),
+        ("where did I leave my coffee", "no_aria", None),
+        ("", "no_words", None),
+        ("Aria, forget it", "say", "cancel"),
+        ("", "failed", None),
+    ]
+    web = httpx.Client(base_url=backend.url, trust_env=False)
+    wait_for(lambda: len(web.get("/api/live/state").json().get("feed", [])) == 5)
+    web.close()
+    assert "coffee" not in str(trials(tmp_path))
+    assert all("feed" not in state for state in probe.states)  # Not on /guidance/state.
+
+
+def test_mic_state_says_when_speech_cannot_be_heard(probe, node, camera, mic):
+    # No Audio messages here, so the glasses look silent until last_audio moves.
+    wait_for(lambda: node.mic_state == "no_audio")
+    node.last_audio = time.monotonic() + 60  # Stays fresh for the rest of the test.
+    wait_for(lambda: node.mic_state == "listening")
+    node.endpointer.speaking = True
+    wait_for(lambda: node.mic_state == "speech")
+    node.endpointer.speaking = False
+    wait_for(lambda: node.mic_state == "listening")
+    node.speaking_until = time.monotonic() + 60
+    time.sleep(0.5)
+    assert node.mic_state == "listening"  # The glasses speaking keeps it on, by default.
+    node.config["open_mic_deaf_while_speaking"] = True
+    wait_for(lambda: node.mic_state == "deaf")
+    assert node.console_state["mic"] == "deaf"
+    node.speaking_until = 0.0
+    node.audio_active = True
+    wait_for(lambda: node.mic_state == "talk")
+    node.audio_active = False
+    node.config["open_mic"] = False
+    wait_for(lambda: node.mic_state == "off")
+
+
+def test_aria_stop_interrupts_the_glasses(probe, node, camera, mic, tmp_path):
+    started(probe, node, mic)
+    node.speaking_until = time.monotonic() + 30  # Still reading the instruction.
+    mic("Aria, stop")
+    assert trials(tmp_path)[0][0]["outcome"] == "cancelled"
+
+
+def test_a_hint_heard_back_during_playback_does_not_close(probe, node, camera, backend, mic):
+    started(probe, node, mic)
+    backend.engine.intent = "cancel"
+    mic("Aria, forget it")
+    heard(probe, node, 2)
+    node.speaking_until = time.monotonic() + 30
+    mic("Aria, stop")  # The microphone caught the end of "Say Aria, stop to cancel."
+    assert node.task.active and node.heard_feed[-1]["outcome"] == "echo"
+    node.speaking_until = 0.0
+    mic("Aria, stop")  # The same words after the hint are the wearer's.
+    assert not node.task.active
+
+
+def test_bare_next_asks_for_a_step_without_aria(probe, node, camera, backend, mic):
+    started(probe, node, mic)
+    calls = len(backend.engine.calls)
+    mic("Next.")
+    assert heard(probe, node, 2) == "Okay."
+    wait_for(lambda: len(backend.engine.calls) == calls + 1)
+    assert backend.engine.intent_calls == []
+
+
+def trial_folder(tmp_path):
+    return next((tmp_path / "backend" / "guidance").glob("*/trials/*"))
+
+
+def test_a_hold_to_talk_goal_keeps_its_timing_in_the_new_trial(probe, node, camera, tmp_path):
+    timing = {"duration_ms": 120.0, "client_roundtrip_ms": 150.0, "speech_started_ms": 1000.0}
+    result = {"text": "goal: pick up the pen", "timing": timing}
+    node.messages.put(("transcript", node.task.epoch, result))
+    heard(probe, node, 1)
+    [(trial, events, _)] = trials(tmp_path)
+    assert trial["goal"] == "pick up the pen"
+    [said] = [e for e in events if e["kind"] == "transcript"]
+    assert said["voice"] and said["text"] == "goal: pick up the pen"
+    assert said["duration_ms"] == 120.0 and said["speech_started_ms"] == 1000.0
+
+
+def audio_block(probe_pub, level, stamp_ms, samples=1600):
+    message = Audio()
+    message.header.stamp.sec = int(stamp_ms // 1000)
+    message.header.stamp.nanosec = int(stamp_ms % 1000 * 1e6)
+    message.sample_rate, message.channels = 16000, 1
+    message.data = np.full(samples, int(level * 2**31 / 16), dtype=np.int32).tolist()
+    probe_pub.publish(message)
+
+
+def test_microphone_to_trial_end_to_end(probe, node, executor, camera, tmp_path, monkeypatch):
+    """Real Audio messages: endpointing, the utterance queue, the deaf window and saved sound."""
+    node.config["open_mic"] = True
+    heard_wavs = []
+
+    def transcribe(wav):
+        heard_wavs.append(wav)
+        return {"text": "Aria, trial start, pick up the pen"}
+
+    monkeypatch.setattr(node.client, "transcribe", transcribe)
+    publisher = probe.create_publisher(Audio, "/aria/audio", 100)
+    wait_for(lambda: publisher.get_subscription_count() > 0)
+    now = time.time() * 1000
+
+    def play(level, blocks):
+        nonlocal now
+        for _ in range(blocks):
+            audio_block(publisher, level, now)
+            now += 100
+            time.sleep(0.01)
+
+    play(0.001, 5)  # Room noise.
+    assert heard_wavs == []
+    speech_start = now
+    play(0.02, 6)  # Speech: 0.6 s.
+    play(0.001, 13)  # 1.3 s of trailing quiet ends it.
+    speech_end = now
+    wait_for(lambda: len(heard_wavs) == 1)
+    assert heard(probe, node, 1) == "Pick up the pen."
+    [goal_transcript] = [e for e in trials(tmp_path)[0][1] if e["kind"] == "transcript"]
+    assert goal_transcript["voice"] and goal_transcript["client_roundtrip_ms"] >= 0
+    assert goal_transcript["speech_started_ms"] == pytest.approx(speech_start, abs=1)
+    # The endpoint is the block that completed 1.2 s of quiet, one block before the last.
+    assert goal_transcript["speech_endpointed_ms"] == pytest.approx(speech_end - 100, abs=1)
+    assert "trial start" not in trial_captions(trial_folder(tmp_path)).read_text()
+    # With the guard on, speech while the glasses talk must not become an utterance.
+    node.config["open_mic_deaf_while_speaking"] = True
+    node.speaking_until = time.monotonic() + 10
+    play(0.02, 6)
+    play(0.001, 13)
+    time.sleep(0.3)
+    assert len(heard_wavs) == 1
+    assert not node.endpointer.speaking
+    # By default the same speech gets through, so a reply is not cut off.
+    node.config["open_mic_deaf_while_speaking"] = False
+    play(0.02, 6)
+    play(0.001, 13)
+    wait_for(lambda: len(heard_wavs) == 2)
+    node.trial.close("completed")
+    [(trial, _, _)] = trials(tmp_path)
+    assert trial["audio"]["rate"] == 16000
+    assert trial["audio"]["start_ms"] < trial["started_ms"]  # Opens with the buffered blocks.
+    pcm = next(tmp_path.glob("backend/guidance/*/trials/*/audio.pcm"))
+    assert pcm.stat().st_size >= 2 * 1600 * 30

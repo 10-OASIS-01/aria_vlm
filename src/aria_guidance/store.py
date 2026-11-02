@@ -124,7 +124,9 @@ class Store:
             self._put(db, "plans", plan)
             if accepted:
                 session["state"] = (
-                    "completed" if response["status"] == "completed" else "awaiting_feedback"
+                    "awaiting_confirmation"
+                    if response["status"] == "done_proposed"
+                    else "awaiting_feedback"
                 )
                 session["history"].append({"role": "assistant", "text": response["instruction"]})
                 session["history"] = session["history"][-24:]
@@ -148,12 +150,19 @@ class Store:
             if event == "cancel":
                 session["state"] = "cancelled"
                 session["version"] += 1  # Invalidates any generation currently in flight.
+            elif event == "confirm":
+                if session["state"] != "awaiting_confirmation":
+                    raise Conflict(f"Nothing to confirm while session is {session['state']}")
+                session["state"] = "completed"
             else:
-                if session["state"] not in {"awaiting_feedback", "ready"}:
+                if session["state"] not in {"awaiting_feedback", "ready", "awaiting_confirmation"}:
                     raise Conflict(f"Cannot give feedback while session is {session['state']}")
-                session["history"].append(
-                    {"role": "user", "text": text or f"{event}; please observe again."}
-                )
+                text = text or f"{event}; please observe again."
+                if session["state"] == "awaiting_confirmation":
+                    # Feedback after a completion proposal is a rejection. Saying so explicitly
+                    # stops the model from repeating DONE (a bare "Next." did not, in replay).
+                    text = f"No, the goal is not complete yet. {text}"
+                session["history"].append({"role": "user", "text": text})
                 session["history"] = session["history"][-24:]
                 session["state"] = "ready"
             session["updated_at"] = time.time()

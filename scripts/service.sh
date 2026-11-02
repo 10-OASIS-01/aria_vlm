@@ -19,7 +19,8 @@ case "${1:-start}" in
             echo "$session is already running"
             exit 0
         fi
-        "$python_bin" -c 'import os,socket; s=socket.socket(); s.bind((os.getenv("ARIA_HOST","127.0.0.1"), int(os.getenv("ARIA_PORT","8785")))); s.close()'
+        # SO_REUSEADDR like uvicorn, so connections in TIME_WAIT after a restart do not block it.
+        "$python_bin" -c 'import os,socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind((os.getenv("ARIA_HOST","127.0.0.1"), int(os.getenv("ARIA_PORT","8785")))); s.close()'
         printf -v command 'cd %q && ARIA_ENV_FILE=%q ARIA_PYTHON=%q bash scripts/service.sh run >> .runtime/logs/service.log 2>&1' \
             "$project_dir" "${ARIA_ENV_FILE:-.env}" "$python_bin"
         tmux new-session -d -s "$session" "$command"
